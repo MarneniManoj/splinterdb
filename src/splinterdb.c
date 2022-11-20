@@ -22,6 +22,7 @@
 #include "btree_private.h"
 #include "shard_log.h"
 #include "poison.h"
+#include <stdio.h>
 
 const char *BUILD_VERSION = "splinterdb_build_version " GIT_VERSION;
 const char *
@@ -706,6 +707,8 @@ splinterdb_insert_message(const splinterdb *kvs, // IN
    if (rc != 0) {
       return rc;
    }
+
+   printf("Encoded string %s \n\n", key_buffer);
 
    platform_status status = trunk_insert(kvs->spl, key_buffer, msg);
    return platform_status_to_int(status);
