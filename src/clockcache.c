@@ -1521,6 +1521,7 @@ clockcache_try_evict(clockcache *cc, uint32 entry_number)
    /* 5. clear lookup, disk addr */
    uint64 addr = entry->page.disk_addr;
    if (addr != CC_UNMAPPED_ADDR) {
+
       uint64 lookup_no      = clockcache_divide_by_page_size(cc, addr);
       cc->lookup[lookup_no] = CC_UNMAPPED_ENTRY;
       entry->page.disk_addr = CC_UNMAPPED_ADDR;
@@ -1531,6 +1532,7 @@ clockcache_try_evict(clockcache *cc, uint32 entry_number)
 
    /* 6. set status to CC_FREE_STATUS (clears claim and write lock) */
    entry->status = CC_FREE_STATUS;
+   printf("EVICTING FROM MEMORY TO DISK");
    clockcache_log(
       addr, entry_number, "evict: entry %u addr %lu\n", entry_number, addr);
 
