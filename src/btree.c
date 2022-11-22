@@ -17,8 +17,8 @@
  *  header: struct btree_hdr{}
  *  entry : struct leaf_entry{}
  *
- * The arrows indicate that the offsets table grows to the left
- * and the entries grow to the right.
+ * The arrows indicate that the offsets table grows to the right
+ * and the entries grow to the left.
  *
  * Entries are not physically sorted in a node.  The offsets table
  * gives the offset of each entry, in key order.
@@ -1680,7 +1680,9 @@ btree_insert(cache              *cc,         // IN
    log_trace_key(key, "btree_insert");
 
 start_over:
+   printf("Loading Page into memory");
    btree_node_get(cc, cfg, &root_node, PAGE_TYPE_MEMTABLE);
+   printf("Loading Complete");
 
    if (btree_height(root_node.hdr) == 0) {
       rc = btree_create_leaf_incorporate_spec(

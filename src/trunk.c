@@ -3117,15 +3117,23 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
    uint64          generation;
    platform_status rc = memtable_maybe_rotate_and_get_insert_lock(
       spl->mt_ctxt, &generation, &lock_page);
+   printf("Generation number %ld , heap id : %p\n ", generation, spl->heap_id);
    if (!SUCCESS(rc)) {
       goto out;
    }
 
    // this call is safe because we hold the insert lock
    memtable *mt = trunk_get_memtable(spl, generation);
+   printf("Memtable before insertion");
+   memtable_print(stdout, spl->cc, mt);
+
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
       spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation);
+   printf("Memtable After insertion");
+   memtable_print(stdout, spl->cc, mt);
+   printf("Leaf Generation number %ld \n ", leaf_generation);
+
    if (!SUCCESS(rc)) {
       goto unlock_insert_lock;
    }
