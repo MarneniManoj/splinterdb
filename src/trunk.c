@@ -3123,9 +3123,14 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 
    // this call is safe because we hold the insert lock
    memtable *mt = trunk_get_memtable(spl, generation);
+   printf("Memtable before insertion");
+   memtable_print(stdout, spl->cc, mt);
+
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
       spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation);
+   printf("Memtable after insertion");
+   memtable_print(stdout, spl->cc, mt);
    if (!SUCCESS(rc)) {
       goto unlock_insert_lock;
    }

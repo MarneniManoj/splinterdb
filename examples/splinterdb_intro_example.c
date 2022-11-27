@@ -63,6 +63,17 @@ main()
    rc    = splinterdb_insert(spl_handle, key, value);
    printf("Inserted key '%s'\n", fruit);
 
+   for (int i = 0; i <= 40000; ++i) {
+      char buf[12];
+      snprintf(buf, 12, "%d", i);
+      fruit = buf;
+      descr = "Is a good source of vitamin-C.";
+      key   = slice_create((size_t)strlen(fruit), fruit);
+      value = slice_create((size_t)strlen(descr), descr);
+      rc    = splinterdb_insert(spl_handle, key, value);
+      printf("Inserted key '%s' for the %d th time \n", fruit, i);
+   }
+
    fruit = "Mango";
    descr = "Mango is the king of fruits.";
    key   = slice_create((size_t)strlen(fruit), fruit);

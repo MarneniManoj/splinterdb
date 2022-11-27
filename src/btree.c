@@ -3,7 +3,8 @@
 
 #include "btree_private.h"
 #include "poison.h"
-
+#include<stdlib.h>
+#include <string.h>
 /******************************************************************
  * Structure of a BTree node: Disk-resident structure:
  *
@@ -376,6 +377,7 @@ btree_insert_leaf_entry(const btree_config *cfg,
               (hdr->num_entries - k - 1) * sizeof(hdr->offsets[0]));
       hdr->offsets[k] = this_entry_offset;
    }
+   printf("\nLOG DATA: *** btree_insert_leaf_entry: k: %d", k);
    return succeeded;
 }
 
@@ -606,6 +608,8 @@ btree_try_perform_leaf_incorporate_spec(const btree_config          *cfg,
                                         const leaf_incorporate_spec *spec,
                                         uint64                      *generation)
 {
+   printf("\nLOG DATA: Inserting key: %s, value: %s", (char *)spec->key.data,
+          (char *)spec->msg.new_message.data.data);
    bool success;
    switch (spec->old_entry_state) {
       case ENTRY_DID_NOT_EXIST:
@@ -1437,7 +1441,6 @@ btree_split_child_index(cache              *cc,
    /* p: lock, c: lock, rc: - */
 
    uint64 idx = btree_choose_index_split(cfg, child->hdr);
-
    /* p: lock, c: lock, rc: - */
 
    btree_alloc(cc,
@@ -1493,6 +1496,7 @@ btree_split_child_index(cache              *cc,
    /* p:  -,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
+   printf("\nLOG DATA: splitting node %ld, at index %ld, parent node %ld, right node %ld", child->addr, idx, parent->addr, right_child.addr);
 
    return 0;
 }
@@ -1526,9 +1530,11 @@ btree_defragment_or_split_child_index(cache              *cc,
 
    if (total_space_required < BTREE_SPLIT_THRESHOLD(btree_page_size(cfg))) {
       btree_node_full_unlock(cc, cfg, parent);
+      printf("\nLOG DATA: Defragmenting the node:  %ld", child->addr);
       btree_defragment_index(cfg, scratch, child->hdr);
       *new_child = *child;
    } else {
+      printf("\nLOG DATA: Splitting the node:  %ld", child->addr);
       btree_split_child_index(cc,
                               cfg,
                               mini,
@@ -1608,6 +1614,7 @@ btree_grow_root(cache              *cc,   // IN
                 btree_node         *root_node)    // OUT
 {
    // allocate a new left node
+   printf("Growing root");
    btree_node child;
    btree_alloc(cc,
                mini,
@@ -1681,8 +1688,9 @@ btree_insert(cache              *cc,         // IN
 
 start_over:
    btree_node_get(cc, cfg, &root_node, PAGE_TYPE_MEMTABLE);
-
+   printf("btree_height '%d'\n", btree_height(root_node.hdr));
    if (btree_height(root_node.hdr) == 0) {
+//      printf("***Inserting key at address %s \n", root_node.addr)
       rc = btree_create_leaf_incorporate_spec(
          cfg, heap_id, root_node.hdr, key, msg, &spec);
       if (!SUCCESS(rc)) {
@@ -1698,13 +1706,17 @@ start_over:
       if (btree_try_perform_leaf_incorporate_spec(
              cfg, root_node.hdr, &spec, generation))
       {
+         printf("\nLOG DATA: ***Inserting key at address %ld \n", root_node.addr);
          *was_unique = spec.old_entry_state == ENTRY_DID_NOT_EXIST;
          btree_node_full_unlock(cc, cfg, &root_node);
          destroy_leaf_incorporate_spec(&spec);
          return STATUS_OK;
       }
       destroy_leaf_incorporate_spec(&spec);
+      printf("Calling grow root 1");
+//      btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
       btree_grow_root(cc, cfg, mini, &root_node);
+//      btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
       btree_node_unlock(cc, cfg, &root_node);
       btree_node_unclaim(cc, cfg, &root_node);
    }
@@ -1734,7 +1746,10 @@ start_over:
                                    parent_entry->pivot_data.stats);
       }
       if (btree_index_is_full(cfg, root_node.hdr)) {
+         printf("Calling grow root 2");
+//         btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
          btree_grow_root(cc, cfg, mini, &root_node);
+//         btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
          child_idx = 0;
       }
       if (need_to_set_min_key) {
@@ -1885,6 +1900,7 @@ start_over:
          goto start_over;
       }
       btree_node_lock(cc, cfg, &child_node);
+      printf("\nLOG DATA: ***Inserting key at address1 %ld\n", child_node.addr);
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child_node.hdr, &spec, generation);
       platform_assert(incorporated);
