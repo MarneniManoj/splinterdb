@@ -285,6 +285,7 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, nod
    hdr->num_entries++;
 
    thread_data->offset += new_entry_size;
+   hdr->checksum = shard_log_checksum(log->cfg, page);
    debug_assert(thread_data->offset <= shard_log_page_size(log->cfg));
 
    cache_unlock(cc, page);
@@ -487,7 +488,7 @@ shard_log_print(shard_log *log)
    uint64            extent_addr      = log->addr;
    shard_log_config *cfg              = log->cfg;
    uint64            magic            = log->magic;
-   data_config      *dcfg             = cfg->data_cfg;
+//   data_config      *dcfg             = cfg->data_cfg;
    uint64            pages_per_extent = shard_log_pages_per_extent(cfg);
 
    while (extent_addr != 0 && cache_get_ref(cc, extent_addr) > 0) {
@@ -502,10 +503,13 @@ shard_log_print(shard_log *log)
                  !terminal_log_entry(cfg, page->data, le);
                  le = log_entry_next(le))
             {
-               platform_default_log("%s -- %s : %lu\n",
-                                    key_string(dcfg, log_entry_key(le)),
-                                    message_string(dcfg, log_entry_message(le)),
-                                    le->generation);
+//               platform_default_log("%s -- %s : %lu\n",
+//                                    key_string(dcfg, log_entry_key(le)),
+//                                    message_string(dcfg, log_entry_message(le)),
+//                                    le->generation);
+
+               printf("\nread log entry : %s ,parent: %lu,  child: %s , lsn: %lu\n", (char *)log_entry_key(le).data, le->page_addr, (char *)log_entry_message(le).data.data, le->lsn);
+
             }
          }
          cache_unget(cc, page);
