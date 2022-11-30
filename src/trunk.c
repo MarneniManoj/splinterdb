@@ -528,6 +528,8 @@ typedef struct ONDISK trunk_hdr {
    uint64 next_addr;        // PBN of the node's successor (0 if no successor)
    uint64 generation;       // counter incremented on a node split
    uint64 pivot_generation; // counter incremented when new pivots are added
+   uint64 page_lsn;          //Log Sequence Number(LSN) corresponding newest update on the page
+   uint64 rec_lsn;           //Oldest update since it was last flushed, used to determine if page is dirty
 
    uint16 start_branch;      // first live branch
    uint16 start_frac_branch; // first fractional branch (branch in a bundle)
@@ -3144,9 +3146,6 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 //      int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
 //
 //
-//      if (crappy_rc != 0) {
-//         goto unlock_insert_lock;
-//      }
    }
 
 unlock_insert_lock:
@@ -3312,6 +3311,21 @@ unlock_incorp_lock:
    return should_continue;
 }
 
+static inline void
+log_memtable_incorporate(trunk_handle *spl, const page_handle *root, const memtable *mt)
+{
+   char key[10] = "dummy";
+   char str[100];
+   sprintf(str, "%llu", mt->root_addr);
+
+   slice skey = slice_create(10, key);
+   slice msg = slice_create(100, str);
+
+   uint64  lsn;
+   int crappy_rc = log_write(spl->log, skey, message_create(MESSAGE_TYPE_MEM_INCORP, msg), mt->generation, NODE_TYPE_TRUNK, root->disk_addr, &lsn);
+   trunk_hdr* hdr = (trunk_hdr *)root->data;
+   hdr->page_lsn = lsn;
+}
 /*
  * Function to incorporate the memtable to the root.
  * Carries out the following steps :
@@ -3348,11 +3362,17 @@ trunk_memtable_incorporate(trunk_handle  *spl,
    platform_stream_handle stream;
    platform_status        rc = trunk_open_log_stream_if_enabled(spl, &stream);
    platform_assert_status_ok(rc);
+
+   /*
+    * X. Get a new branch in a bundle for the memtable
+    */
+   trunk_compacted_memtable *cmt =
+      trunk_get_compacted_memtable(spl, generation);
    trunk_log_stream_if_enabled(spl,
                                &stream,
-                               "incorporate memtable gen %lu into root %lu\n",
+                               "incorporate memtable gen %lu into root %lu, mem %lu\n",
                                generation,
-                               spl->root_addr);
+                               spl->root_addr, cmt->branch.root_addr);
    trunk_log_node_if_enabled(&stream, spl, root);
    trunk_log_stream_if_enabled(
       spl, &stream, "----------------------------------------\n");
@@ -3360,11 +3380,6 @@ trunk_memtable_incorporate(trunk_handle  *spl,
    // X. Release lookup lock
    memtable_unlock_unclaim_unget_lookup_lock(spl->mt_ctxt, mt_lookup_lock_page);
 
-   /*
-    * X. Get a new branch in a bundle for the memtable
-    */
-   trunk_compacted_memtable *cmt =
-      trunk_get_compacted_memtable(spl, generation);
    trunk_compact_bundle_req *req = cmt->req;
    req->bundle_no                = trunk_get_new_bundle(spl, root);
    trunk_bundle    *bundle       = trunk_get_bundle(spl, root, req->bundle_no);
@@ -3439,6 +3454,7 @@ trunk_memtable_incorporate(trunk_handle  *spl,
    trunk_log_stream_if_enabled(spl, &stream, "\n");
    trunk_close_log_stream_if_enabled(spl, &stream);
 
+   log_memtable_incorporate(spl, root, mt);
    // X. If root is full, flush until it is no longer full
    uint64 flush_start;
    if (spl->cfg.use_stats) {
@@ -8052,10 +8068,11 @@ trunk_print_branches_and_bundles(platform_log_handle *log_handle,
    uint16 end_sb       = trunk_end_subbundle(spl, node);
 
    // clang-format off
-   platform_log(log_handle, "|--------------------------------------------------------------------------------------------------|\n");
+   platform_log(log_handle, "|--------------------------------------------------------------------------------------------------------------|\n");
    platform_log(log_handle, "|                              BRANCHES AND [SUB]BUNDLES                                           |\n");
-   platform_log(log_handle, "|start_branch=%-2u end_branch=%-2u start_bundle=%-2u end_bundle=%-2u start_sb=%-2u end_sb=%-2u%-17s|\n",
+   platform_log(log_handle, "|start_branch=%-2u frac=%-2u end_branch=%-2u start_bundle=%-2u end_bundle=%-2u start_sb=%-2u end_sb=%-2u%-17s|\n",
                 start_branch,
+trunk_start_frac_branch(spl, node),
                 end_branch,
                 start_bundle,
                 end_bundle,
