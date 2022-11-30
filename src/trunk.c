@@ -527,6 +527,8 @@ typedef struct ONDISK trunk_hdr {
    uint64 next_addr;        // PBN of the node's successor (0 if no successor)
    uint64 generation;       // counter incremented on a node split
    uint64 pivot_generation; // counter incremented when new pivots are added
+   uint64 page_lsn;          //Log Sequence Number(LSN) corresponding newest update on the page
+   uint64 rec_lsn;           //Oldest update since it was last flushed, used to determine if page is dirty
 
    uint16 start_branch;      // first live branch
    uint16 start_frac_branch; // first fractional branch (branch in a bundle)
@@ -3131,11 +3133,11 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
    }
 
    if (spl->cfg.use_log) {
-      slice key_slice = slice_create(trunk_key_size(spl), key);
-      int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation, NODE_TYPE_TRUNK);
-      if (crappy_rc != 0) {
-         goto unlock_insert_lock;
-      }
+//      slice key_slice = slice_create(trunk_key_size(spl), key);
+//      int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation, NODE_TYPE_TRUNK);
+//      if (crappy_rc != 0) {
+//         goto unlock_insert_lock;
+//      }
    }
 
 unlock_insert_lock:
@@ -3301,6 +3303,21 @@ unlock_incorp_lock:
    return should_continue;
 }
 
+static inline void
+log_memtable_incorporate(trunk_handle *spl, const page_handle *root, const memtable *mt)
+{
+   char key[10] = "dummy";
+   char str[100];
+   sprintf(str, "%llu", mt->root_addr);
+
+   slice skey = slice_create(10, key);
+   slice msg = slice_create(100, str);
+
+   uint64  lsn;
+   int crappy_rc = log_write(spl->log, skey, message_create(MESSAGE_TYPE_MEM_INCORP, msg), mt->generation, NODE_TYPE_TRUNK, root->disk_addr, &lsn);
+   trunk_hdr* hdr = (trunk_hdr *)root->data;
+   hdr->page_lsn = lsn;
+}
 /*
  * Function to incorporate the memtable to the root.
  * Carries out the following steps :
@@ -3429,6 +3446,7 @@ trunk_memtable_incorporate(trunk_handle  *spl,
    trunk_log_stream_if_enabled(spl, &stream, "\n");
    trunk_close_log_stream_if_enabled(spl, &stream);
 
+   log_memtable_incorporate(spl, root, mt);
    // X. If root is full, flush until it is no longer full
    uint64 flush_start;
    if (spl->cfg.use_stats) {

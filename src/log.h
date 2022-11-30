@@ -30,7 +30,9 @@ typedef int (*log_write_fn)(log_handle *log,
                             slice       key,
                             message     data,
                             uint64      generation,
-                            node_type   nt);
+                            node_type   nt,
+                            uint64      page_addr,
+                            uint64*     lsn);
 typedef void (*log_release_fn)(log_handle *log);
 typedef uint64 (*log_addr_fn)(log_handle *log);
 typedef uint64 (*log_magic_fn)(log_handle *log);
@@ -49,9 +51,9 @@ struct log_handle {
 };
 
 static inline int
-log_write(log_handle *log, slice key, message data, uint64 generation, node_type nt)
+log_write(log_handle *log, slice key, message data, uint64 generation, node_type nt,  uint64 page_addr, uint64* lsn)
 {
-   return log->ops->write(log, key, data, generation, nt);
+   return log->ops->write(log, key, data, generation, nt, page_addr, lsn);
 }
 
 static inline void

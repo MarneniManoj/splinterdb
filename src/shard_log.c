@@ -22,7 +22,7 @@
 static uint64 shard_log_magic_idx = 0;
 
 int
-shard_log_write(log_handle *log, slice key, message msg, uint64 generation, node_type nt);
+shard_log_write(log_handle *log, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64* lsn);
 uint64
 shard_log_addr(log_handle *log);
 uint64
@@ -146,6 +146,8 @@ struct ONDISK log_entry {
    uint16 messagelen;
    uint8  msg_type;
    uint8  node_type;
+   uint64 lsn;
+   uint64 page_addr;
    char   contents[];
 };
 
@@ -221,9 +223,9 @@ get_new_page_for_thread(shard_log             *log,
    thread_data->offset   = sizeof(shard_log_hdr);
    return 0;
 }
-
+_Atomic uint64 global = 100;
 int
-shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, node_type nt)
+shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64 *lsn)
 {
    shard_log             *log = (shard_log *)logh;
    cache                 *cc  = log->cc;
@@ -272,7 +274,11 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, nod
    cursor->keylen     = slice_length(key);
    cursor->messagelen = message_length(msg);
    cursor->msg_type   = message_class(msg);
-   cursor->node_type   = nt;
+   cursor->node_type  = nt;
+   cursor->lsn        = global++;
+   *lsn               = cursor->lsn;
+   cursor->page_addr  = page_addr;
+
    memmove(log_entry_key_cursor(cursor), slice_data(key), slice_length(key));
    memmove(
       log_entry_message_cursor(cursor), message_data(msg), message_length(msg));
