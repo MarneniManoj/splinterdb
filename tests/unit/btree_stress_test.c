@@ -25,6 +25,8 @@
 #include "clockcache.h"
 #include "btree_private.h"
 #include "btree_test_common.h"
+#include "shard_log.h"
+
 
 typedef struct insert_thread_params {
    cache           *cc;
@@ -307,7 +309,7 @@ insert_tests(cache           *cc,
    int    msgbuf_size = btree_page_size(cfg);
    uint8 *keybuf      = TYPED_MANUAL_MALLOC(hid, keybuf, keybuf_size);
    uint8 *msgbuf      = TYPED_MANUAL_MALLOC(hid, msgbuf, msgbuf_size);
-
+   log_handle *log;
    for (uint64 i = start; i < end; i++) {
       if (!SUCCESS(btree_insert(cc,
                                 cfg,
@@ -318,7 +320,7 @@ insert_tests(cache           *cc,
                                 gen_key(cfg, i, keybuf, keybuf_size),
                                 gen_msg(cfg, i, msgbuf, msgbuf_size),
                                 &generation,
-                                &was_unique)))
+                                &was_unique, log)))
       {
          ASSERT_TRUE(FALSE, "Failed to insert 4-byte %ld\n", i);
       }
