@@ -3316,13 +3316,13 @@ log_memtable_incorporate(trunk_handle *spl, const page_handle *root, const memta
 {
    char key[10] = "dummy";
    char str[100];
-   sprintf(str, "%llu", mt->root_addr);
+   sprintf(str, "%lu", mt->root_addr);
 
    slice skey = slice_create(10, key);
    slice msg = slice_create(100, str);
 
    uint64  lsn;
-   int crappy_rc = log_write(spl->log, skey, message_create(MESSAGE_TYPE_MEM_INCORP, msg), mt->generation, NODE_TYPE_TRUNK, root->disk_addr, &lsn);
+   log_write(spl->log, skey, message_create(MESSAGE_TYPE_MEM_INCORP, msg), mt->generation, NODE_TYPE_TRUNK, root->disk_addr, &lsn);
    trunk_hdr* hdr = (trunk_hdr *)root->data;
    hdr->page_lsn = lsn;
 }

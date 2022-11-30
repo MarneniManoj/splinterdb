@@ -36,7 +36,6 @@ static log_ops shard_log_ops = {
    .meta_addr = shard_log_meta_addr,
    .magic     = shard_log_magic,
 };
-
 void
 shard_log_iterator_get_curr(iterator *itor, slice *key, message *msg);
 platform_status
@@ -284,6 +283,7 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, nod
    memmove(
       log_entry_message_cursor(cursor), message_data(msg), message_length(msg));
    hdr->num_entries++;
+   hdr->checksum = shard_log_checksum(log->cfg, page);
    printf("num_entries %d", hdr->num_entries);
 
    thread_data->offset += new_entry_size;
