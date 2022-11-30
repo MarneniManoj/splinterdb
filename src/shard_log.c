@@ -512,7 +512,9 @@ shard_log_print(shard_log *log)
                                     key_string(dcfg, log_entry_key(le)),
                                     message_string(dcfg, log_entry_message(le)),
                                     le->generation);
-               printf("\nread log entry : %s value: %s \n", (char *)log_entry_key(le).data, (char *)log_entry_message(le).data.data);
+               printf("\nread log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n", log_entry_message(le).type, (char *)log_entry_key(le).data,
+                      (char *)log_entry_message(le).data.data, le->page_addr,
+                      le->generation, le->lsn);
             }
          }
          cache_unget(cc, page);
