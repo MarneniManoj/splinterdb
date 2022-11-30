@@ -18,25 +18,20 @@
 
 int write_to_wal(){
    printf("****writing to wal ");
-//   platform_status         status;
-   log_handle        *logh;
-//   uint64             i;
-//   uint64             addr;
-//   uint64             magic;
-//   shard_log_iterator itor;
-//   iterator          *itorh = (iterator *)&itor;
-   platform_heap_handle hh;
-   platform_heap_id     hid;
-   platform_heap_create(platform_get_module_id(), 1 * GiB, &hh, &hid);
-   shard_log *log = TYPED_MALLOC(hid, log);
-   logh = (log_handle *)log;
-   const char *fruit = "apple";
-   const char *descr = "An apple a day keeps the doctor away!";
-
-   slice key   = slice_create((size_t)strlen(fruit), fruit);
-   slice value = slice_create((size_t)strlen(descr), descr);
-   message msg1 = message_create(MESSAGE_TYPE_INSERT, value);
-   log_write(logh, key, msg1, 0);
+//   log_handle        *logh;
+//
+//   platform_heap_handle hh;
+//   platform_heap_id     hid;
+//   platform_heap_create(platform_get_module_id(), 1 * GiB, &hh, &hid);
+//   shard_log *log = TYPED_MALLOC(hid, log);
+//   logh = (log_handle *)log;
+//   const char *fruit = "apple";
+//   const char *descr = "An apple a day keeps the doctor away!";
+//
+//   slice key   = slice_create((size_t)strlen(fruit), fruit);
+//   slice value = slice_create((size_t)strlen(descr), descr);
+//   message msg1 = message_create(MESSAGE_TYPE_INSERT, value);
+//   log_write(logh, key, msg1, 0);
    return 0;
 
 }
@@ -223,4 +218,9 @@ int get_log_entry(){
    return 0;
 }
 
+void print_log_entry(log_handle *logh){
+   printf("logger: print_log_entry");
+   shard_log             *log = (shard_log *)logh;
+   shard_log_print(log);
+}
 
