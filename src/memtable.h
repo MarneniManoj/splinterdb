@@ -14,6 +14,7 @@
 #include "task.h"
 #include "cache.h"
 #include "btree.h"
+#include "shard_log.h"
 
 #define MEMTABLE_SPACE_OVERHEAD_FACTOR (2)
 
@@ -152,7 +153,8 @@ memtable_insert(memtable_context *ctxt,
                 platform_heap_id  heap_id,
                 const char       *key,
                 message           msg,
-                uint64           *generation);
+                uint64           *generation,
+                log_handle     *log);
 
 page_handle *
 memtable_get_lookup_lock(memtable_context *ctxt);

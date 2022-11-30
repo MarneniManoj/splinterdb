@@ -230,6 +230,7 @@ _Atomic uint64 global = 100;
 int
 shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64 *lsn)
 {
+   printf("In shard_log_write");
    shard_log             *log = (shard_log *)logh;
    cache                 *cc  = log->cc;
    shard_log_thread_data *thread_data =
@@ -286,6 +287,7 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, nod
    memmove(
       log_entry_message_cursor(cursor), message_data(msg), message_length(msg));
    hdr->num_entries++;
+   printf("num_entries %d", hdr->num_entries);
 
    thread_data->offset += new_entry_size;
    hdr->checksum = shard_log_checksum(log->cfg, page);
@@ -510,6 +512,7 @@ shard_log_print(shard_log *log)
                                     key_string(dcfg, log_entry_key(le)),
                                     message_string(dcfg, log_entry_message(le)),
                                     le->generation);
+               printf("\nread log entry : %s value: %s \n", (char *)log_entry_key(le).data, (char *)log_entry_message(le).data.data);
             }
          }
          cache_unget(cc, page);

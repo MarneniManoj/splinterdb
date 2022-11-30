@@ -18,6 +18,7 @@
 #include "cache.h"
 #include "clockcache.h"
 #include "task.h"
+#include "shard_log.h"
 #define TEST_MAX_ASYNC_INFLIGHT 63
 static uint64 max_async_inflight = 32;
 
@@ -93,12 +94,13 @@ test_btree_insert(test_memtable_context *ctxt, slice key, message data)
 
    // dummy leaf generation (unused in this test)
    uint64 dummy_leaf_generation;
+   log_handle *log;
    rc = memtable_insert(ctxt->mt_ctxt,
                         &ctxt->mt_ctxt->mt[generation],
                         ctxt->heap_id,
                         slice_data(key),
                         data,
-                        &dummy_leaf_generation);
+                        &dummy_leaf_generation, log);
 
 out:
    memtable_unget_insert_lock(ctxt->mt_ctxt, lock_page);

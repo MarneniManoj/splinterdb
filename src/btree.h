@@ -13,6 +13,7 @@
 #include "mini_allocator.h"
 #include "iterator.h"
 #include "util.h"
+#include "shard_log.h"
 
 /*
  * Max height of the BTree. This is somewhat of an arbitrary limit to size
@@ -216,8 +217,8 @@ btree_insert(cache              *cc,         // IN
              slice               key,        // IN
              message             data,       // IN
              uint64             *generation, // OUT
-             bool               *was_unique);              // OUT
-
+             bool               *was_unique, // OUT
+             log_handle              *log); // IN
 /*
  *-----------------------------------------------------------------------------
  * btree_ctxt_init --

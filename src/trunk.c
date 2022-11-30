@@ -18,6 +18,7 @@
 #include "task.h"
 #include "util.h"
 #include "srq.h"
+#include "logger.h"
 
 #include "poison.h"
 
@@ -3129,7 +3130,7 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
-      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation);
+      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation, spl->log);
    printf("Memtable after insertion");
    memtable_print(stdout, spl->cc, mt);
    if (!SUCCESS(rc)) {
@@ -3137,8 +3138,13 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
    }
 
    if (spl->cfg.use_log) {
+      printf("inside cfg.use_log");
 //      slice key_slice = slice_create(trunk_key_size(spl), key);
+//      write_to_wal();
+      print_log_entry(spl->log);
 //      int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
+//
+//
 //      if (crappy_rc != 0) {
 //         goto unlock_insert_lock;
 //      }
@@ -9133,7 +9139,7 @@ trunk_config_init(trunk_config        *trunk_cfg,
    trunk_cfg->fanout                  = fanout;
    trunk_cfg->max_branches_per_node   = max_branches_per_node;
    trunk_cfg->reclaim_threshold       = reclaim_threshold;
-   trunk_cfg->use_log                 = use_log;
+   trunk_cfg->use_log                 = TRUE;
    trunk_cfg->use_stats               = use_stats;
    trunk_cfg->verbose_logging_enabled = verbose_logging;
    trunk_cfg->log_handle              = log_handle;
