@@ -39,8 +39,8 @@ typedef enum message_type {
    MESSAGE_TYPE_SPLIT_LEAF,
    MESSAGE_TYPE_SPLIT_INDEX,
    MESSAGE_TYPE_SPLIT_ROOT,
-   MESSAGE_TYPE_PIVOT_DATA          = 1000,
    MESSAGE_TYPE_GROW_ROOT
+   MESSAGE_TYPE_PIVOT_DATA          = 1000,
 } message_type;
 
 /*
