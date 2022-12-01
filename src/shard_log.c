@@ -22,7 +22,7 @@
 static uint64 shard_log_magic_idx = 0;
 
 int
-shard_log_write(log_handle *log, slice key, message msg, uint64 generation);
+shard_log_write(log_handle *log, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64* lsn);
 uint64
 shard_log_addr(log_handle *log);
 uint64
@@ -145,6 +145,9 @@ struct ONDISK log_entry {
    uint16 keylen;
    uint16 messagelen;
    uint8  msg_type;
+   uint8  node_type;
+   uint64 lsn;
+   uint64 page_addr;
    char   contents[];
 };
 
@@ -220,9 +223,9 @@ get_new_page_for_thread(shard_log             *log,
    thread_data->offset   = sizeof(shard_log_hdr);
    return 0;
 }
-
+_Atomic uint64 global = 100;
 int
-shard_log_write(log_handle *logh, slice key, message msg, uint64 generation)
+shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64 *lsn)
 {
    shard_log             *log = (shard_log *)logh;
    cache                 *cc  = log->cc;
@@ -271,12 +274,18 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation)
    cursor->keylen     = slice_length(key);
    cursor->messagelen = message_length(msg);
    cursor->msg_type   = message_class(msg);
+   cursor->node_type  = nt;
+   cursor->lsn        = global++;
+   *lsn               = cursor->lsn;
+   cursor->page_addr  = page_addr;
+
    memmove(log_entry_key_cursor(cursor), slice_data(key), slice_length(key));
    memmove(
       log_entry_message_cursor(cursor), message_data(msg), message_length(msg));
    hdr->num_entries++;
 
    thread_data->offset += new_entry_size;
+   hdr->checksum = shard_log_checksum(log->cfg, page);
    debug_assert(thread_data->offset <= shard_log_page_size(log->cfg));
 
    cache_unlock(cc, page);
@@ -479,7 +488,7 @@ shard_log_print(shard_log *log)
    uint64            extent_addr      = log->addr;
    shard_log_config *cfg              = log->cfg;
    uint64            magic            = log->magic;
-   data_config      *dcfg             = cfg->data_cfg;
+//   data_config      *dcfg             = cfg->data_cfg;
    uint64            pages_per_extent = shard_log_pages_per_extent(cfg);
 
    while (extent_addr != 0 && cache_get_ref(cc, extent_addr) > 0) {
@@ -494,10 +503,13 @@ shard_log_print(shard_log *log)
                  !terminal_log_entry(cfg, page->data, le);
                  le = log_entry_next(le))
             {
-               platform_default_log("%s -- %s : %lu\n",
-                                    key_string(dcfg, log_entry_key(le)),
-                                    message_string(dcfg, log_entry_message(le)),
-                                    le->generation);
+//               platform_default_log("%s -- %s : %lu\n",
+//                                    key_string(dcfg, log_entry_key(le)),
+//                                    message_string(dcfg, log_entry_message(le)),
+//                                    le->generation);
+
+               printf("\nread log entry : %s ,parent: %lu,  child: %s , lsn: %lu\n", (char *)log_entry_key(le).data, le->page_addr, (char *)log_entry_message(le).data.data, le->lsn);
+
             }
          }
          cache_unget(cc, page);
