@@ -1740,8 +1740,9 @@ start_over:
         goto start_over;
     }
     // TODO : generation ?
+    uint64 generation;
     if (btree_try_perform_leaf_incorporate_spec(
-            cfg, node.hdr, &spec, &node.hdr->generation))
+            cfg, node.hdr, &spec, &generation));
     {
         btree_node_full_unlock(cc, cfg, &node);
         destroy_leaf_incorporate_spec(&spec);
