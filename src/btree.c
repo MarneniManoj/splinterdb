@@ -1666,18 +1666,27 @@ btree_grow_root(cache              *cc,   // IN
                 mini_allocator     *mini, // IN/OUT
                 btree_node         *root_node,    // OUT
                 log_handle         *log,
-                slice              key,
-                uint64 *generation)
+                slice              key,   //TODO: remove
+                uint64 *generation, // TODO: remove
+                uint64 child_page_address,
+                bool specific_child)
 {
-   // allocate a new left node
    btree_node child;
-   btree_alloc(cc,
-               mini,
-               btree_height(root_node->hdr),
-               NULL_SLICE,
-               NULL,
-               PAGE_TYPE_MEMTABLE,
-               &child);
+   if(specific_child) {
+       btree_node_get(cc, cfg, &child, PAGE_TYPE_MEMTABLE);
+       // Reset entries if partially written
+       btree_reset_node_entries(cfg, child.hdr);
+   } else {
+       // allocate a new left node
+       btree_alloc(cc,
+                   mini,
+                   btree_height(root_node->hdr),
+                   NULL_SLICE,
+                   NULL,
+                   PAGE_TYPE_MEMTABLE,
+                   &child);
+
+   }
 
    // copy root to child
    memmove(child.hdr, root_node->hdr, btree_page_size(cfg));
@@ -1701,11 +1710,45 @@ btree_grow_root(cache              *cc,   // IN
 //   sprintf(child_addr, "%lu", child.addr);
 //   char* log_msg = &child_addr[0];
 //   message grow_root_msg = message_create(MESSAGE_TYPE_INSERT, slice_create((size_t)strlen(log_msg), log_msg));
+
    write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
 
    return 0;
 }
 
+platform_status insert_key_to_btree_node(cache *cc,
+                                         const btree_config *cfg,
+                                         platform_heap_id heap_id,
+                                         slice key,
+                                         message msg,
+                                         uint64 page_addr){
+    platform_status rc;
+    leaf_incorporate_spec spec;
+    btree_node node;
+    node.addr = page_addr;
+start_over:
+    btree_node_get(cc, cfg,&node, PAGE_TYPE_MEMTABLE);
+    rc = btree_create_leaf_incorporate_spec(
+            cfg, heap_id, node.hdr, key, msg, &spec);
+    if (!SUCCESS(rc)) {
+        btree_node_unget(cc, cfg, &node);
+        return rc;
+    }
+    if (!btree_node_claim(cc, cfg, &node)) {
+        btree_node_unget(cc, cfg, &node);
+        destroy_leaf_incorporate_spec(&spec);
+        goto start_over;
+    }
+    // TODO : generation ?
+    if (btree_try_perform_leaf_incorporate_spec(
+            cfg, node.hdr, &spec, &node.hdr->generation))
+    {
+        btree_node_full_unlock(cc, cfg, &node);
+        destroy_leaf_incorporate_spec(&spec);
+        return STATUS_OK;
+    }
+
+}
 
 /*
  *-----------------------------------------------------------------------------
@@ -1795,7 +1838,7 @@ start_over:
       destroy_leaf_incorporate_spec(&spec);
       //      printf("Calling grow root 1");
       //      btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
-      btree_grow_root(cc, cfg, mini, &root_node, log, key, generation);
+      btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE);
       //      btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
       btree_node_unlock(cc, cfg, &root_node);
       btree_node_unclaim(cc, cfg, &root_node);
@@ -1828,7 +1871,7 @@ start_over:
       if (btree_index_is_full(cfg, root_node.hdr)) {
          //         printf("Calling grow root 2");
          //         btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
-         btree_grow_root(cc, cfg, mini, &root_node, log, key, generation);
+         btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE);
          //         btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
          child_idx = 0;
       }
