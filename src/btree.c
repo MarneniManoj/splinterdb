@@ -1261,9 +1261,9 @@ static inline message create_grow_root_message(uint64 child_address){
    return grow_root_msg;
 }
 
-static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, message_type msg_type){
+static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, message_type msg_type, uint64 left_child_index){
    char child_addr[40];
-   sprintf(child_addr, "%lu_%lu", left_child_address, right_child_addr);
+   sprintf(child_addr, "%lu_%lu_%lu", left_child_address, right_child_addr, left_child_index);
    char *log_msg = &child_addr[0];
    message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
    return split_msg;
@@ -1321,7 +1321,9 @@ btree_split_child_leaf(cache                 *cc,
                        btree_node            *child,
                        leaf_incorporate_spec *spec,
                        uint64                *generation, // OUT
-                       log_handle            *log)
+                       log_handle            *log,
+                       uint64 right_child_address,
+                       bool is_specific_child)
 {
    btree_node right_child;
 
@@ -1331,14 +1333,20 @@ btree_split_child_leaf(cache                 *cc,
       btree_build_leaf_splitting_plan(cfg, child->hdr, spec);
 
    /* p: claim, c: claim, rc: - */
+   if (is_specific_child){
+       btree_node_get(cc, cfg, &right_child, PAGE_TYPE_MEMTABLE);
+       // Reset entries if partially written
+       btree_reset_node_entries(cfg, right_child.hdr);
+   } else {
+       btree_alloc(cc,
+                   mini,
+                   btree_height(child->hdr),
+                   NULL_SLICE,
+                   NULL,
+                   PAGE_TYPE_MEMTABLE,
+                   &right_child);
+   }
 
-   btree_alloc(cc,
-               mini,
-               btree_height(child->hdr),
-               NULL_SLICE,
-               NULL,
-               PAGE_TYPE_MEMTABLE,
-               &right_child);
 
    /* p: claim, c: claim, rc: write */
 
@@ -1364,7 +1372,8 @@ btree_split_child_leaf(cache                 *cc,
 
    /* p: fully unlocked, c: claim, rc: write */
    uint64 right_child_gen = right_child.hdr->generation;
-   write_to_wal(log, spec->key, create_split_message(child->addr, right_child.addr, MESSAGE_TYPE_SPLIT_LEAF), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
+   //TODO: Do not write to WAL while recovery
+   write_to_wal(log, spec->key, create_split_message(child->addr, right_child.addr, MESSAGE_TYPE_SPLIT_LEAF, index_of_child_in_parent), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
    printf("\nFINAL LOG: Split parent: %ld, left child: %ld, right child: %ld\n", parent->addr, child->addr, right_child.addr);
 
    btree_node_full_unlock(cc, cfg, &right_child);
@@ -1669,13 +1678,13 @@ btree_grow_root(cache              *cc,   // IN
                 slice              key,   //TODO: remove
                 uint64 *generation, // TODO: remove
                 uint64 child_page_address,
-                bool specific_child)
+                bool is_specific_child)
 {
    btree_node child;
-   if(specific_child) {
+   if(is_specific_child) {
        btree_node_get(cc, cfg, &child, PAGE_TYPE_MEMTABLE);
        // Reset entries if partially written
-       btree_reset_node_entries(cfg, child.hdr);
+//       btree_reset_node_entries(cfg, child.hdr);
    } else {
        // allocate a new left node
        btree_alloc(cc,
@@ -1710,7 +1719,7 @@ btree_grow_root(cache              *cc,   // IN
 //   sprintf(child_addr, "%lu", child.addr);
 //   char* log_msg = &child_addr[0];
 //   message grow_root_msg = message_create(MESSAGE_TYPE_INSERT, slice_create((size_t)strlen(log_msg), log_msg));
-
+    //TODO: Do not write to WAL while recovery
    write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
 
    return 0;
