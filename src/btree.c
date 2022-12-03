@@ -1261,11 +1261,11 @@ static inline message create_grow_root_message(uint64 child_address){
    return grow_root_msg;
 }
 
-static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr){
+static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, message_type msg_type){
    char child_addr[40];
    sprintf(child_addr, "%lu_%lu", left_child_address, right_child_addr);
    char *log_msg = &child_addr[0];
-   message split_msg = message_create(MESSAGE_TYPE_SPLIT_LEAF, slice_create((size_t)strlen(log_msg), log_msg));
+   message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
    return split_msg;
 }
 
@@ -1363,12 +1363,13 @@ btree_split_child_leaf(cache                 *cc,
       cfg, child->hdr, spec, plan, right_child.hdr, generation);
 
    /* p: fully unlocked, c: claim, rc: write */
+   uint64 right_child_gen = right_child.hdr->generation;
+   write_to_wal(log, spec->key, create_split_message(child->addr, right_child.addr, MESSAGE_TYPE_SPLIT_LEAF), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
+   printf("\nFINAL LOG: Split parent: %ld, left child: %ld, right child: %ld\n", parent->addr, child->addr, right_child.addr);
 
    btree_node_full_unlock(cc, cfg, &right_child);
 
    /* p: fully unlocked, c: claim, rc: fully unlocked */
-   printf("\nFINAL LOG: Split parent: %ld, left child: %ld, right child: %ld\n", parent->addr, child->addr, right_child.addr);
-   write_to_wal(log, spec->key, create_split_message(child->addr, right_child.addr), generation, NODE_TYPE_BTREE, parent->addr);
 
    btree_node_lock(cc, cfg, child);
    btree_split_leaf_cleanup_left_node(
@@ -1482,7 +1483,8 @@ btree_split_child_index(cache              *cc,
                         btree_node         *child,
                         const slice         key_to_be_inserted,
                         btree_node         *new_child, // OUT
-                        int64              *next_child_idx)         // IN/OUT
+                        int64              *next_child_idx,         // IN/OUT
+                        log_handle            *log)
 {
    btree_node right_child;
 
@@ -1545,6 +1547,8 @@ btree_split_child_index(cache              *cc,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
    printf("\nLOG DATA: splitting node %ld, at index %ld, parent node %ld, right node %ld", child->addr, idx, parent->addr, right_child.addr);
+   uint64 right_child_gen = right_child.hdr->generation;
+   write_to_wal(log, key_to_be_inserted, create_split_message(child->addr, right_child.addr, MESSAGE_TYPE_SPLIT_INDEX), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
 
    return 0;
 }
@@ -1566,7 +1570,8 @@ btree_defragment_or_split_child_index(cache              *cc,
                                       btree_node *child,
                                       const slice key_to_be_inserted,
                                       btree_node *new_child, // OUT
-                                      int64      *next_child_idx) // IN/OUT
+                                      int64      *next_child_idx, // IN/OUT
+                                      log_handle *log)
 {
    uint64 nentries   = btree_num_entries(child->hdr);
    uint64 live_bytes = 0;
@@ -1592,7 +1597,7 @@ btree_defragment_or_split_child_index(cache              *cc,
                               child,
                               key_to_be_inserted,
                               new_child,
-                              next_child_idx);
+                              next_child_idx, log);
    }
 
    return 0;
@@ -1690,9 +1695,8 @@ btree_grow_root(cache              *cc,   // IN
    bool succeeded = btree_set_index_entry(
       cfg, root_node->hdr, 0, new_pivot, child.addr, BTREE_PIVOT_STATS_UNKNOWN);
    platform_assert(succeeded);
-
+   printf("\nFINAL LOG: GrowRoot Parent: %ld Child: %ld parent generation num: %ld, child generation num: %ld\n", root_node->addr, child.addr, root_node->hdr->generation, child.hdr->generation);
    btree_node_unget(cc, cfg, &child);
-   printf("\nFINAL LOG: GrowRoot Parent: %ld Child: %ld \n", root_node->addr, child.addr);
 //   char child_addr[20];
 //   sprintf(child_addr, "%lu", child.addr);
 //   char* log_msg = &child_addr[0];
@@ -1906,7 +1910,7 @@ start_over:
                                                   &child_node,
                                                   key,
                                                   &new_child,
-                                                  &next_child_idx);
+                                                  &next_child_idx, log);
             parent_node = new_child;
          } else {
             btree_node_full_unlock(cc, cfg, &parent_node);
