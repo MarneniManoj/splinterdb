@@ -4,7 +4,7 @@
 #include "btree_private.h"
 #include "poison.h"
 #include "shard_log.h"
-#include<stdlib.h>
+#include <stdlib.h>
 #include <string.h>
 
 /******************************************************************
@@ -379,7 +379,6 @@ btree_insert_leaf_entry(const btree_config *cfg,
               (hdr->num_entries - k - 1) * sizeof(hdr->offsets[0]));
       hdr->offsets[k] = this_entry_offset;
    }
-   //   printf("\nLOG DATA: *** btree_insert_leaf_entry: k: %d", k);
    return succeeded;
 }
 
@@ -610,8 +609,6 @@ btree_try_perform_leaf_incorporate_spec(const btree_config          *cfg,
                                         const leaf_incorporate_spec *spec,
                                         uint64                      *generation)
 {
-   //   printf("\nLOG DATA: Inserting key: %s, value: %s", (char *)spec->key.data,
-   //          (char *)spec->msg.new_message.data.data);
    bool success;
    switch (spec->old_entry_state) {
       case ENTRY_DID_NOT_EXIST:
@@ -662,7 +659,6 @@ btree_defragment_leaf(const btree_config    *cfg, // IN
                       btree_hdr             *hdr,
                       leaf_incorporate_spec *spec) // IN/OUT
 {
-
    btree_hdr *scratch_hdr = (btree_hdr *)scratch->defragment_node.scratch_node;
    memcpy(scratch_hdr, hdr, btree_page_size(cfg));
    btree_reset_node_entries(cfg, hdr);
@@ -852,9 +848,6 @@ btree_split_leaf_build_right_node(const btree_config    *cfg,      // IN
       } else {
 
          leaf_entry *entry = btree_get_leaf_entry(cfg, left_hdr, i);
-         //         printf("\nLOG DATA: Inserting key: %s, value: %s", (char *)spec->key.data,
-         //                (char *)spec->msg.new_message.data.data);
-         //         printf("\nLOG DATA: add key %s , value %s to right child", (char *)leaf_entry_key_slice(entry).data, (char *)leaf_entry_message(entry).data.data);
          btree_set_leaf_entry(cfg,
                               right_hdr,
                               dst_idx,
@@ -1261,9 +1254,17 @@ static inline message create_grow_root_message(uint64 child_address){
    return grow_root_msg;
 }
 
-static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, message_type msg_type, uint64 left_child_index){
+static inline message create_split_index_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type){
    char child_addr[40];
    sprintf(child_addr, "%lu_%lu_%lu", left_child_address, right_child_addr, left_child_index);
+   char *log_msg = &child_addr[0];
+   message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
+   return split_msg;
+}
+
+static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type, char *msg){
+   char child_addr[40];
+   sprintf(child_addr, "%lu_%lu_%lu_%s", left_child_address, right_child_addr, left_child_index, msg);
    char *log_msg = &child_addr[0];
    message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
    return split_msg;
@@ -1373,9 +1374,7 @@ btree_split_child_leaf(cache                 *cc,
    /* p: fully unlocked, c: claim, rc: write */
    uint64 right_child_gen = right_child.hdr->generation;
    //TODO: Do not write to WAL while recovery
-   write_to_wal(log, spec->key, create_split_message(child->addr, right_child.addr, MESSAGE_TYPE_SPLIT_LEAF, index_of_child_in_parent), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
-   printf("\nFINAL LOG: Split parent: %ld, left child: %ld, right child: %ld\n", parent->addr, child->addr, right_child.addr);
-
+   write_to_wal(log, spec->key, create_split_message(child->addr, right_child.addr, index_of_child_in_parent, MESSAGE_TYPE_SPLIT_LEAF, (char *)spec->msg.new_message.data.data), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
    btree_node_full_unlock(cc, cfg, &right_child);
 
    /* p: fully unlocked, c: claim, rc: fully unlocked */
@@ -1384,17 +1383,13 @@ btree_split_child_leaf(cache                 *cc,
    btree_split_leaf_cleanup_left_node(
       cfg, scratch, child->hdr, spec, plan, right_child.addr);
    if (plan.insertion_goes_left) {
-      printf("\nFINAL LOG: Insert key: %s value: %s page address %ld ", (char *)spec->key.data, (char *)spec->msg.new_message.data.data, child->addr);
-      printf("\nLOG DATA: ***Inserting key at virtual address %ld physical address %ld\n", child->addr, child->page->disk_addr);
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child->hdr, spec, generation);
       write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
 
       platform_assert(incorporated);
    } else {
-      printf("\nFINAL LOG: Insert key: %s value: %s page address %ld \n", (char *)spec->key.data, (char *)spec->msg.new_message.data.data, right_child.addr);
       write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, right_child.addr);
-
    }
    btree_node_full_unlock(cc, cfg, child);
 
@@ -1444,11 +1439,7 @@ btree_defragment_or_split_child_leaf(cache              *cc,
       btree_node_unget(cc, cfg, parent);
       btree_node_lock(cc, cfg, child);
 
-      //      printf("\nLOG DATA: ***Inserting key at address %ld \n", child->addr);
-      printf("LOG DATA: Defragmenting leaf node %ld", child->addr);
       btree_defragment_leaf(cfg, scratch, child->hdr, spec);
-      printf("\nFINAL LOG: Insert key: %s value: %s page address %ld \n", (char *)spec->key.data, (char *)spec->msg.new_message.data.data, child->addr);
-
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child->hdr, spec, generation);
       write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
@@ -1463,7 +1454,10 @@ btree_defragment_or_split_child_leaf(cache              *cc,
                              index_of_child_in_parent,
                              child,
                              spec,
-                             generation, log);
+                             generation, 
+                             log,
+                             0,
+                             FALSE);
    }
 
    return 0;
@@ -1555,9 +1549,8 @@ btree_split_child_index(cache              *cc,
    /* p:  -,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
-   printf("\nLOG DATA: splitting node %ld, at index %ld, parent node %ld, right node %ld", child->addr, idx, parent->addr, right_child.addr);
    uint64 right_child_gen = right_child.hdr->generation;
-   write_to_wal(log, key_to_be_inserted, create_split_message(child->addr, right_child.addr, MESSAGE_TYPE_SPLIT_INDEX), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
+   write_to_wal(log, key_to_be_inserted, create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent, MESSAGE_TYPE_SPLIT_INDEX), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
 
    return 0;
 }
@@ -1592,11 +1585,9 @@ btree_defragment_or_split_child_index(cache              *cc,
 
    if (total_space_required < BTREE_SPLIT_THRESHOLD(btree_page_size(cfg))) {
       btree_node_full_unlock(cc, cfg, parent);
-      printf("\nLOG DATA: Defragmenting the node:  %ld", child->addr);
       btree_defragment_index(cfg, scratch, child->hdr);
       *new_child = *child;
    } else {
-      printf("\nLOG DATA: Splitting the node:  %ld", child->addr);
       btree_split_child_index(cc,
                               cfg,
                               mini,
@@ -1713,12 +1704,7 @@ btree_grow_root(cache              *cc,   // IN
    bool succeeded = btree_set_index_entry(
       cfg, root_node->hdr, 0, new_pivot, child.addr, BTREE_PIVOT_STATS_UNKNOWN);
    platform_assert(succeeded);
-   printf("\nFINAL LOG: GrowRoot Parent: %ld Child: %ld parent generation num: %ld, child generation num: %ld\n", root_node->addr, child.addr, root_node->hdr->generation, child.hdr->generation);
    btree_node_unget(cc, cfg, &child);
-//   char child_addr[20];
-//   sprintf(child_addr, "%lu", child.addr);
-//   char* log_msg = &child_addr[0];
-//   message grow_root_msg = message_create(MESSAGE_TYPE_INSERT, slice_create((size_t)strlen(log_msg), log_msg));
     //TODO: Do not write to WAL while recovery
    write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
 
@@ -1804,9 +1790,7 @@ btree_insert(cache              *cc,         // IN
 
 start_over:
    btree_node_get(cc, cfg, &root_node, PAGE_TYPE_MEMTABLE);
-   //   printf("btree_height '%d'\n", btree_height(root_node.hdr));
    if (btree_height(root_node.hdr) == 0) {
-      //      printf("***Inserting key at address %s \n", root_node.addr)
       rc = btree_create_leaf_incorporate_spec(
          cfg, heap_id, root_node.hdr, key, msg, &spec);
       if (!SUCCESS(rc)) {
@@ -1822,34 +1806,14 @@ start_over:
       if (btree_try_perform_leaf_incorporate_spec(
              cfg, root_node.hdr, &spec, generation))
       {
-         //         const char *fruit = "jack fruit1";
-         printf("\nFINAL LOG: Insert key: %s value: %s page address %ld \n", (char *)spec.key.data, (char *)spec.msg.new_message.data.data, root_node.addr);
-         //         char log_msg_arr[100];
-         //         strcpy(log_msg_arr, (char *)spec.msg.new_message.data.data);
-         //         char addr[20];
-         //         sprintf(addr, "%lu", root_node.addr);
-         //         strcat(log_msg_arr, "_");
-         //         strcat(log_msg_arr, addr);
-         //         char* log_msg = &log_msg_arr[0];
-         //         char *log_msg = (char *)spec.msg.new_message.data.data;
-         //         char *addr = (char *) root_node.addr;
-         //         printf("log_msg_str %s", log_msg);
-         //         slice       value = slice_create((size_t)strlen(log_msg), log_msg);
-         //         message lg_msg = message_create(MESSAGE_TYPE_INSERT, value);
-
          write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, root_node.addr);
-         //         log_write(log,  key, lg_msg, 1111);
-         //         printf("\nLOG DATA: ***Inserting key at address %ld \n", root_node.addr);
          *was_unique = spec.old_entry_state == ENTRY_DID_NOT_EXIST;
          btree_node_full_unlock(cc, cfg, &root_node);
          destroy_leaf_incorporate_spec(&spec);
          return STATUS_OK;
       }
       destroy_leaf_incorporate_spec(&spec);
-      //      printf("Calling grow root 1");
-      //      btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
       btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE);
-      //      btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
       btree_node_unlock(cc, cfg, &root_node);
       btree_node_unclaim(cc, cfg, &root_node);
    }
@@ -1879,10 +1843,7 @@ start_over:
                                    parent_entry->pivot_data.stats);
       }
       if (btree_index_is_full(cfg, root_node.hdr)) {
-         //         printf("Calling grow root 2");
-         //         btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
          btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE);
-         //         btree_print_tree(Platform_error_log_handle, cc, cfg, root_node.addr);
          child_idx = 0;
       }
       if (need_to_set_min_key) {
@@ -2033,9 +1994,6 @@ start_over:
          goto start_over;
       }
       btree_node_lock(cc, cfg, &child_node);
-
-      //      printf("\nLOG DATA: ***Inserting key at address1 %ld\n", child_node.addr);
-      printf("\nFINAL LOG: Insert key: %s value: %s page address %ld ", (char *)spec.key.data, (char *)spec.msg.new_message.data.data, child_node.addr);
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child_node.hdr, &spec, generation);
       write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, child_node.addr);
@@ -2919,7 +2877,7 @@ btree_pack_link_node(btree_pack_req *req,
    btree_node        *edge       = &req->edge[height][offset];
    btree_pivot_stats *edge_stats = &req->edge_stats[height][offset];
    slice              pivot = height ? btree_get_pivot(req->cfg, edge->hdr, 0)
-                                          : btree_get_tuple_key(req->cfg, edge->hdr, 0);
+                                       : btree_get_tuple_key(req->cfg, edge->hdr, 0);
    edge->hdr->next_extent_addr = next_extent_addr;
    btree_node_unlock(req->cc, req->cfg, edge);
    btree_node_unclaim(req->cc, req->cfg, edge);
