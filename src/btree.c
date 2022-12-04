@@ -1262,8 +1262,11 @@ static inline message create_split_index_message(uint64 left_child_address, uint
    return split_msg;
 }
 
-static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type, char *msg){
-   char child_addr[100];
+static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type, message msg){
+   char *msg_buf = (char *)msg.data.data;
+   uint64 buf_size = msg.data.length;
+   buf_size += 3 * 21;
+   char child_addr[buf_size];
    sprintf(child_addr, "%lu %lu %lu %s", left_child_address, right_child_addr, left_child_index, msg);
 
    char *log_msg = &child_addr[0];
@@ -1381,7 +1384,7 @@ btree_split_child_leaf(cache                 *cc,
                                                           right_child.addr,
                                                           index_of_child_in_parent,
                                                           MESSAGE_TYPE_SPLIT_LEAF,
-                                                          (char *) spec->msg.new_message.data.data),
+                                                          spec->msg.new_message),
                                                           &right_child_gen,
                                                           NODE_TYPE_BTREE, parent->addr);
    }
