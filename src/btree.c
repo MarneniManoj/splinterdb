@@ -1256,15 +1256,16 @@ static inline message create_grow_root_message(uint64 child_address){
 
 static inline message create_split_index_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type){
    char child_addr[40];
-   sprintf(child_addr, "%lu_%lu_%lu", left_child_address, right_child_addr, left_child_index);
+   sprintf(child_addr, "%lu %lu %lu", left_child_address, right_child_addr, left_child_index);
    char *log_msg = &child_addr[0];
    message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
    return split_msg;
 }
 
 static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type, char *msg){
-   char child_addr[40];
-   sprintf(child_addr, "%lu_%lu_%lu_%s", left_child_address, right_child_addr, left_child_index, msg);
+   char child_addr[100];
+   sprintf(child_addr, "%lu %lu %lu %s", left_child_address, right_child_addr, left_child_index, msg);
+
    char *log_msg = &child_addr[0];
    message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
    return split_msg;

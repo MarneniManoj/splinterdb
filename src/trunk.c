@@ -3124,19 +3124,21 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 
    // this call is safe because we hold the insert lock
    memtable *mt = trunk_get_memtable(spl, generation);
-   printf("Memtable before insertion");
-   memtable_print(stdout, spl->cc, mt);
+//   printf("Memtable before insertion");
+//   memtable_print(stdout, spl->cc, mt);
 
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
       spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation, spl->log, spl->cfg.use_log);
-   printf("Memtable after insertion");
-   memtable_print(stdout, spl->cc, mt);
+//   printf("Memtable after insertion");
+//   memtable_print(stdout, spl->cc, mt);
    if (!SUCCESS(rc)) {
       goto unlock_insert_lock;
    }
 
    if (spl->cfg.use_log) {
+      shard_log *log = (shard_log *)spl->log;
+      shard_log_print(log);
       // slice key_slice = slice_create(trunk_key_size(spl), key);
       // int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
       // if (crappy_rc != 0) {
