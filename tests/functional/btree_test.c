@@ -100,7 +100,7 @@ test_btree_insert(test_memtable_context *ctxt, slice key, message data)
                         ctxt->heap_id,
                         slice_data(key),
                         data,
-                        &dummy_leaf_generation, log);
+                        &dummy_leaf_generation, log, FALSE);
 
 out:
    memtable_unget_insert_lock(ctxt->mt_ctxt, lock_page);

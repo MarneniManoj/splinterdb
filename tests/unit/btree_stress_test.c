@@ -320,7 +320,7 @@ insert_tests(cache           *cc,
                                 gen_key(cfg, i, keybuf, keybuf_size),
                                 gen_msg(cfg, i, msgbuf, msgbuf_size),
                                 &generation,
-                                &was_unique, log)))
+                                &was_unique, log, FALSE)))
       {
          ASSERT_TRUE(FALSE, "Failed to insert 4-byte %ld\n", i);
       }

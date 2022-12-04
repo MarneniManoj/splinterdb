@@ -18,7 +18,6 @@
 #include "task.h"
 #include "util.h"
 #include "srq.h"
-#include "logger.h"
 
 #include "poison.h"
 
@@ -3138,16 +3137,11 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
    }
 
    if (spl->cfg.use_log) {
-      printf("inside cfg.use_log");
-//      slice key_slice = slice_create(trunk_key_size(spl), key);
-//      write_to_wal();
-      print_log_entry(spl->log);
-//      int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
-//
-//
-//      if (crappy_rc != 0) {
-//         goto unlock_insert_lock;
-//      }
+      // slice key_slice = slice_create(trunk_key_size(spl), key);
+      // int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
+      // if (crappy_rc != 0) {
+      //    goto unlock_insert_lock;
+      // }
    }
 
 unlock_insert_lock:
