@@ -218,7 +218,8 @@ btree_insert(cache              *cc,         // IN
              message             data,       // IN
              uint64             *generation, // OUT
              bool               *was_unique, // OUT
-             log_handle              *log); // IN
+             log_handle         *log,        // IN
+             bool               use_log);
 /*
  *-----------------------------------------------------------------------------
  * btree_ctxt_init --

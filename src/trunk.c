@@ -3130,7 +3130,7 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
-      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation, spl->log);
+      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation, spl->log, spl->cfg.use_log);
    printf("Memtable after insertion");
    memtable_print(stdout, spl->cc, mt);
    if (!SUCCESS(rc)) {

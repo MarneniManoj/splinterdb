@@ -119,7 +119,8 @@ memtable_insert(memtable_context *ctxt,
                 const char       *key,
                 message           msg,
                 uint64           *leaf_generation,
-                log_handle     *log)
+                log_handle       *log,
+                bool             use_log)
 {
    const threadid tid = platform_get_tid();
    bool           was_unique;
@@ -135,7 +136,8 @@ memtable_insert(memtable_context *ctxt,
                                      msg,
                                      leaf_generation,
                                      &was_unique,
-                                     log);
+                                     log,
+                                     use_log);
    if (!SUCCESS(rc)) {
       return rc;
    }

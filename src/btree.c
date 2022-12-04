@@ -1323,6 +1323,7 @@ btree_split_child_leaf(cache                 *cc,
                        leaf_incorporate_spec *spec,
                        uint64                *generation, // OUT
                        log_handle            *log,
+                       bool                  use_log,
                        uint64 right_child_address,
                        bool is_specific_child)
 {
@@ -1374,7 +1375,15 @@ btree_split_child_leaf(cache                 *cc,
    /* p: fully unlocked, c: claim, rc: write */
    uint64 right_child_gen = right_child.hdr->generation;
    //TODO: Do not write to WAL while recovery
-   write_to_wal(log, spec->key, create_split_message(child->addr, right_child.addr, index_of_child_in_parent, MESSAGE_TYPE_SPLIT_LEAF, (char *)spec->msg.new_message.data.data), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
+   if (use_log) {
+        write_to_wal(log, spec->key, create_split_message(child->addr,
+                                                          right_child.addr,
+                                                          index_of_child_in_parent,
+                                                          MESSAGE_TYPE_SPLIT_LEAF,
+                                                          (char *) spec->msg.new_message.data.data),
+                                                          &right_child_gen,
+                                                          NODE_TYPE_BTREE, parent->addr);
+   }
    btree_node_full_unlock(cc, cfg, &right_child);
 
    /* p: fully unlocked, c: claim, rc: fully unlocked */
@@ -1383,13 +1392,9 @@ btree_split_child_leaf(cache                 *cc,
    btree_split_leaf_cleanup_left_node(
       cfg, scratch, child->hdr, spec, plan, right_child.addr);
    if (plan.insertion_goes_left) {
-      bool incorporated = btree_try_perform_leaf_incorporate_spec(
-         cfg, child->hdr, spec, generation);
-      write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
-
-      platform_assert(incorporated);
-   } else {
-      write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, right_child.addr);
+       bool incorporated = btree_try_perform_leaf_incorporate_spec(
+               cfg, child->hdr, spec, generation);
+       platform_assert(incorporated);
    }
    btree_node_full_unlock(cc, cfg, child);
 
@@ -1415,7 +1420,8 @@ btree_defragment_or_split_child_leaf(cache              *cc,
                                      btree_node *child,
                                      leaf_incorporate_spec *spec,
                                      uint64                *generation, // OUT
-                                     log_handle            *log)
+                                     log_handle            *log,
+                                     bool                  use_log)
 {
    //   printf("btree_defragment_or_split_child_leaf");
    uint64 nentries   = btree_num_entries(child->hdr);
@@ -1442,7 +1448,9 @@ btree_defragment_or_split_child_leaf(cache              *cc,
       btree_defragment_leaf(cfg, scratch, child->hdr, spec);
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child->hdr, spec, generation);
-      write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
+      if (use_log && incorporated) {
+           write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
+      }
       platform_assert(incorporated);
       btree_node_full_unlock(cc, cfg, child);
    } else {
@@ -1456,6 +1464,7 @@ btree_defragment_or_split_child_leaf(cache              *cc,
                              spec,
                              generation, 
                              log,
+                             use_log,
                              0,
                              FALSE);
    }
@@ -1487,7 +1496,8 @@ btree_split_child_index(cache              *cc,
                         const slice         key_to_be_inserted,
                         btree_node         *new_child, // OUT
                         int64              *next_child_idx,         // IN/OUT
-                        log_handle            *log)
+                        log_handle         *log,
+                        bool               use_log)
 {
    btree_node right_child;
 
@@ -1550,8 +1560,15 @@ btree_split_child_index(cache              *cc,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
    uint64 right_child_gen = right_child.hdr->generation;
-   write_to_wal(log, key_to_be_inserted, create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent, MESSAGE_TYPE_SPLIT_INDEX), &right_child_gen, NODE_TYPE_BTREE, parent->addr);
-
+   if (use_log)
+    {
+        write_to_wal(log, key_to_be_inserted,
+                     create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
+                                                MESSAGE_TYPE_SPLIT_INDEX),
+                     &right_child_gen,
+                     NODE_TYPE_BTREE,
+                     parent->addr);
+    }
    return 0;
 }
 
@@ -1573,7 +1590,8 @@ btree_defragment_or_split_child_index(cache              *cc,
                                       const slice key_to_be_inserted,
                                       btree_node *new_child, // OUT
                                       int64      *next_child_idx, // IN/OUT
-                                      log_handle *log)
+                                      log_handle *log,
+                                      bool   use_log)
 {
    uint64 nentries   = btree_num_entries(child->hdr);
    uint64 live_bytes = 0;
@@ -1597,7 +1615,9 @@ btree_defragment_or_split_child_index(cache              *cc,
                               child,
                               key_to_be_inserted,
                               new_child,
-                              next_child_idx, log);
+                              next_child_idx,
+                              log,
+                              use_log);
    }
 
    return 0;
@@ -1669,7 +1689,8 @@ btree_grow_root(cache              *cc,   // IN
                 slice              key,   //TODO: remove
                 uint64 *generation, // TODO: remove
                 uint64 child_page_address,
-                bool is_specific_child)
+                bool is_specific_child,
+                bool use_log)
 {
    btree_node child;
    if(is_specific_child) {
@@ -1706,7 +1727,9 @@ btree_grow_root(cache              *cc,   // IN
    platform_assert(succeeded);
    btree_node_unget(cc, cfg, &child);
     //TODO: Do not write to WAL while recovery
-   write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
+   if (use_log) {
+        write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
+   }
 
    return 0;
 }
@@ -1765,7 +1788,8 @@ btree_insert(cache              *cc,         // IN
              message             msg,        // IN
              uint64             *generation, // OUT
              bool               *was_unique, // OUT
-             log_handle       *log)        // IN
+             log_handle         *log,        // IN
+             bool               use_log)
 {
    platform_status       rc;
    leaf_incorporate_spec spec;
@@ -1806,14 +1830,16 @@ start_over:
       if (btree_try_perform_leaf_incorporate_spec(
              cfg, root_node.hdr, &spec, generation))
       {
-         write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, root_node.addr);
+         if (use_log) {
+             write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, root_node.addr);
+         }
          *was_unique = spec.old_entry_state == ENTRY_DID_NOT_EXIST;
          btree_node_full_unlock(cc, cfg, &root_node);
          destroy_leaf_incorporate_spec(&spec);
          return STATUS_OK;
       }
       destroy_leaf_incorporate_spec(&spec);
-      btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE);
+      btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE, use_log);
       btree_node_unlock(cc, cfg, &root_node);
       btree_node_unclaim(cc, cfg, &root_node);
    }
@@ -1843,7 +1869,7 @@ start_over:
                                    parent_entry->pivot_data.stats);
       }
       if (btree_index_is_full(cfg, root_node.hdr)) {
-         btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE);
+         btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE, use_log);
          child_idx = 0;
       }
       if (need_to_set_min_key) {
@@ -1924,7 +1950,7 @@ start_over:
                                                   &child_node,
                                                   key,
                                                   &new_child,
-                                                  &next_child_idx, log);
+                                                  &next_child_idx, log, use_log);
             parent_node = new_child;
          } else {
             btree_node_full_unlock(cc, cfg, &parent_node);
@@ -1996,7 +2022,9 @@ start_over:
       btree_node_lock(cc, cfg, &child_node);
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child_node.hdr, &spec, generation);
-      write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, child_node.addr);
+      if (use_log) {
+           write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, child_node.addr);
+      }
       platform_assert(incorporated);
       btree_node_full_unlock(cc, cfg, &child_node);
       destroy_leaf_incorporate_spec(&spec);
@@ -2041,7 +2069,8 @@ start_over:
                                         &child_node,
                                         &spec,
                                         generation,
-                                        log);
+                                        log,
+                                        use_log);
    destroy_leaf_incorporate_spec(&spec);
    *was_unique = spec.old_entry_state == ENTRY_DID_NOT_EXIST;
    return STATUS_OK;

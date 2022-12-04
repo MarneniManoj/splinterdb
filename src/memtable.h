@@ -154,7 +154,8 @@ memtable_insert(memtable_context *ctxt,
                 const char       *key,
                 message           msg,
                 uint64           *generation,
-                log_handle     *log);
+                log_handle       *log,
+                bool             use_log);
 
 page_handle *
 memtable_get_lookup_lock(memtable_context *ctxt);
