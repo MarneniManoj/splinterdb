@@ -1263,11 +1263,12 @@ static inline message create_split_index_message(uint64 left_child_address, uint
 }
 
 static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type, message msg){
+   printf("message size : %lu", msg.data.length);
    char *msg_buf = (char *)msg.data.data;
-   uint64 buf_size = msg.data.length;
-   buf_size += 3 * 21;
-   char child_addr[buf_size];
-   sprintf(child_addr, "%lu %lu %lu %s", left_child_address, right_child_addr, left_child_index, msg);
+//   uint64 buf_size = msg.data.length;
+//   buf_size += 3 * 21;
+   char child_addr[2000];
+   sprintf(child_addr, "%lu %lu %lu %s", left_child_address, right_child_addr, left_child_index, msg_buf);
 
    char *log_msg = &child_addr[0];
    message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
