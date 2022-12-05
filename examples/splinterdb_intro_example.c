@@ -46,7 +46,6 @@ main()
    splinterdb *spl_handle = NULL; // To a running SplinterDB instance
 
    int rc = splinterdb_create(&splinterdb_cfg, &spl_handle);
-   const splinterdb *kvs1 = spl_handle;
 
    splinterdb_recover(spl_handle);
    printf("Created SplinterDB instance, dbname '%s'.\n\n", DB_FILE_NAME);
