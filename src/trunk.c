@@ -9490,3 +9490,44 @@ trunk_get_scratch_size()
 {
    return sizeof(trunk_task_scratch);
 }
+void
+read_WAL_for_recovery(trunk_handle *spl)
+{
+   shard_log_iterator *itor;
+   uint64              addr  = log_addr(spl->log);
+   uint64              magic = log_magic(spl->log);
+   shard_log          *slog  = (shard_log *)spl->log;
+   iterator           *itorh = (iterator *)&itor;
+   bool                at_end;
+   slice               returned_key;
+   message             returned_message;
+   uint64              page_addr;
+   uint64              generation;
+   uint64              lsn;
+   page_handle *page = trunk_node_get(spl, spl->root_addr);
+   trunk_super_block *super = (trunk_super_block *)page->data;
+
+   platform_status rc = shard_log_iterator_init(
+      (cache *)spl->cfg.cache_cfg, slog->cfg, spl->heap_id, addr, magic, itor);
+   iterator_at_end(itorh, &at_end);
+   for (; !at_end;) {
+      shard_log_iterator_get_curr_WAL(itorh,
+                                      &returned_key,
+                                      &returned_message,
+                                      &page_addr,
+                                      &generation,
+                                      &lsn);
+      if(lsn > super->master_lsn){
+         platform_default_log("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n",
+                              returned_message.type,
+                              (char *)returned_key.data,
+                              (char *)returned_message.data.data,
+                              page_addr,
+                              generation,
+                              lsn);
+      }
+      iterator_advance(itorh);
+      iterator_at_end(itorh, &at_end);
+   }
+   //    shard_log_print((shard_log *) spl->log);
+}

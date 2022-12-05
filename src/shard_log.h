@@ -95,4 +95,7 @@ shard_log_config_init(shard_log_config *log_cfg,
 void
 shard_log_print(shard_log *log);
 
+void
+shard_log_iterator_get_curr_WAL(iterator *itorh, slice *key, message *msg, uint64 *page_addr, uint64 *generation, uint64 *lsn);
+
 #endif //__SHARD_LOG_H
