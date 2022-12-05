@@ -1272,10 +1272,11 @@ static inline message create_split_message(uint64 left_child_address, uint64 rig
    return split_msg;
 }
 
-static inline void write_to_wal(log_handle *log, slice key, message msg, uint64 *generation, node_type nt, uint64 page_addr){
+static inline uint64 write_to_wal(log_handle *log, slice key, message msg, uint64 *generation, node_type nt, uint64 page_addr){
    uint64 lsn;
    printf("write_to_wal: Writing to WAL");
    log_write(log,  key, msg, *generation, nt, page_addr, &lsn);
+   return lsn;
 }
 
 /**********************************************************************
@@ -1375,15 +1376,16 @@ btree_split_child_leaf(cache                 *cc,
 
    /* p: fully unlocked, c: claim, rc: write */
    uint64 right_child_gen = right_child.hdr->generation;
-   //TODO: Do not write to WAL while recovery
    if (use_log && !is_recovery) {
-        write_to_wal(log, spec->key, create_split_message(child->addr,
+       parent->hdr->page_lsn = write_to_wal(log, spec->key, create_split_message(child->addr,
                                                           right_child.addr,
                                                           index_of_child_in_parent,
                                                           MESSAGE_TYPE_SPLIT_LEAF,
                                                           spec->msg.new_message),
                                                           &right_child_gen,
                                                           NODE_TYPE_BTREE, parent->addr);
+       child->hdr->page_lsn = parent->hdr->page_lsn;
+       right_child.hdr->page_lsn = parent->hdr->page_lsn;
    }
    btree_node_full_unlock(cc, cfg, &right_child);
 
@@ -1450,7 +1452,7 @@ btree_defragment_or_split_child_leaf(cache              *cc,
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child->hdr, spec, generation);
       if (use_log && incorporated) {
-           write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
+           child->hdr->page_lsn = write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
       }
       platform_assert(incorporated);
       btree_node_full_unlock(cc, cfg, child);
@@ -1570,12 +1572,14 @@ btree_split_child_index(cache              *cc,
    uint64 right_child_gen = right_child.hdr->generation;
    if (use_log && !is_recovery)
     {
-        write_to_wal(log, key_to_be_inserted,
+        parent->hdr->page_lsn = write_to_wal(log, key_to_be_inserted,
                      create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
                                                 MESSAGE_TYPE_SPLIT_INDEX),
                      &right_child_gen,
                      NODE_TYPE_BTREE,
                      parent->addr);
+        child->hdr->page_lsn = parent->hdr->page_lsn;
+        right_child.hdr->page_lsn = parent->hdr->page_lsn;
     }
    return 0;
 }
@@ -1736,7 +1740,8 @@ btree_grow_root(cache              *cc,   // IN
    platform_assert(succeeded);
    btree_node_unget(cc, cfg, &child);
    if (use_log && !is_recovery) {
-        write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
+       root_node->hdr->page_lsn = write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
+       child.hdr->page_lsn = root_node->hdr->page_lsn;
    }
 
    return 0;
@@ -1839,7 +1844,7 @@ start_over:
              cfg, root_node.hdr, &spec, generation))
       {
          if (use_log) {
-             write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, root_node.addr);
+             root_node.hdr->page_lsn = write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, root_node.addr);
          }
          *was_unique = spec.old_entry_state == ENTRY_DID_NOT_EXIST;
          btree_node_full_unlock(cc, cfg, &root_node);
@@ -2031,7 +2036,7 @@ start_over:
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child_node.hdr, &spec, generation);
       if (use_log) {
-           write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, child_node.addr);
+          child_node.hdr->page_lsn = write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, child_node.addr);
       }
       platform_assert(incorporated);
       btree_node_full_unlock(cc, cfg, &child_node);
