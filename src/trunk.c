@@ -9273,3 +9273,7 @@ trunk_get_scratch_size()
 {
    return sizeof(trunk_task_scratch);
 }
+
+void read_WAL_for_recovery(trunk_handle *spl){
+    shard_log_print((shard_log *) spl->log);
+}

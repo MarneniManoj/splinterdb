@@ -11,6 +11,7 @@
 
 #include "splinterdb/default_data_config.h"
 #include "splinterdb/splinterdb.h"
+#include "recovery.h"
 
 #define DB_FILE_NAME    "splinterdb_intro_db"
 #define DB_FILE_SIZE_MB 1024 // Size of SplinterDB device; Fixed when created
@@ -45,6 +46,9 @@ main()
    splinterdb *spl_handle = NULL; // To a running SplinterDB instance
 
    int rc = splinterdb_create(&splinterdb_cfg, &spl_handle);
+   const splinterdb *kvs1 = spl_handle;
+
+   splinterdb_recover(spl_handle);
    printf("Created SplinterDB instance, dbname '%s'.\n\n", DB_FILE_NAME);
 
    // Insert a few kv-pairs, describing properties of fruits.

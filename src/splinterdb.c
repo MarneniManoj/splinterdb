@@ -959,3 +959,8 @@ splinterdb_stats_reset(splinterdb *kvs)
 {
    trunk_reset_stats(kvs->spl);
 }
+
+void
+splinterdb_recover(splinterdb *kvs){
+    read_WAL_for_recovery(kvs->spl);
+}
