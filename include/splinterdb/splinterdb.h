@@ -143,6 +143,8 @@ splinterdb_delete(const splinterdb *kvsb, slice key);
 int
 splinterdb_update(const splinterdb *kvsb, slice key, slice delta);
 
+void
+splinterdb_recover(const splinterdb *kvsb);
 // Lookups
 
 // Size of opaque data required to hold a lookup result

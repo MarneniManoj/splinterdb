@@ -488,4 +488,6 @@ trunk_config_init(trunk_config        *trunk_cfg,
 size_t
 trunk_get_scratch_size();
 
+void read_WAL_for_recovery(trunk_handle *spl);
+
 #endif // __TRUNK_H
