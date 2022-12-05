@@ -1265,11 +1265,8 @@ static inline message create_split_index_message(uint64 left_child_address, uint
 static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type, message msg){
    printf("message size : %lu", msg.data.length);
    char *msg_buf = (char *)msg.data.data;
-//   uint64 buf_size = msg.data.length;
-//   buf_size += 3 * 21;
    char child_addr[2000];
    sprintf(child_addr, "%lu %lu %lu %s", left_child_address, right_child_addr, left_child_index, msg_buf);
-
    char *log_msg = &child_addr[0];
    message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
    return split_msg;
@@ -1330,7 +1327,7 @@ btree_split_child_leaf(cache                 *cc,
                        log_handle            *log,
                        bool                  use_log,
                        uint64 right_child_address,
-                       bool is_specific_child)
+                       bool is_recovery)
 {
    btree_node right_child;
 
@@ -1340,10 +1337,9 @@ btree_split_child_leaf(cache                 *cc,
       btree_build_leaf_splitting_plan(cfg, child->hdr, spec);
 
    /* p: claim, c: claim, rc: - */
-   if (is_specific_child){
+   if (is_recovery){
+       right_child.addr = right_child_address;
        btree_node_get(cc, cfg, &right_child, PAGE_TYPE_MEMTABLE);
-       // Reset entries if partially written
-       btree_reset_node_entries(cfg, right_child.hdr);
    } else {
        btree_alloc(cc,
                    mini,
@@ -1380,7 +1376,7 @@ btree_split_child_leaf(cache                 *cc,
    /* p: fully unlocked, c: claim, rc: write */
    uint64 right_child_gen = right_child.hdr->generation;
    //TODO: Do not write to WAL while recovery
-   if (use_log) {
+   if (use_log && !is_recovery) {
         write_to_wal(log, spec->key, create_split_message(child->addr,
                                                           right_child.addr,
                                                           index_of_child_in_parent,
@@ -1502,7 +1498,9 @@ btree_split_child_index(cache              *cc,
                         btree_node         *new_child, // OUT
                         int64              *next_child_idx,         // IN/OUT
                         log_handle         *log,
-                        bool               use_log)
+                        bool               use_log,
+                        uint64             right_child_address,
+                        bool               is_recovery)
 {
    btree_node right_child;
 
@@ -1510,14 +1508,19 @@ btree_split_child_index(cache              *cc,
 
    uint64 idx = btree_choose_index_split(cfg, child->hdr);
    /* p: lock, c: lock, rc: - */
+   if (is_recovery){
+      right_child.addr = right_child_address;
+      btree_node_get(cc, cfg, &right_child, PAGE_TYPE_MEMTABLE);
+   } else {
+      btree_alloc(cc,
+                  mini,
+                  btree_height(child->hdr),
+                  NULL_SLICE,
+                  NULL,
+                  PAGE_TYPE_MEMTABLE,
+                  &right_child);
+   }
 
-   btree_alloc(cc,
-               mini,
-               btree_height(child->hdr),
-               NULL_SLICE,
-               NULL,
-               PAGE_TYPE_MEMTABLE,
-               &right_child);
 
    /* p: lock, c: lock, rc: lock */
 
@@ -1565,7 +1568,7 @@ btree_split_child_index(cache              *cc,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
    uint64 right_child_gen = right_child.hdr->generation;
-   if (use_log)
+   if (use_log && !is_recovery)
     {
         write_to_wal(log, key_to_be_inserted,
                      create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
@@ -1622,7 +1625,7 @@ btree_defragment_or_split_child_index(cache              *cc,
                               new_child,
                               next_child_idx,
                               log,
-                              use_log);
+                              use_log, 0, FALSE);
    }
 
    return 0;
@@ -1694,11 +1697,12 @@ btree_grow_root(cache              *cc,   // IN
                 slice              key,   //TODO: remove
                 uint64 *generation, // TODO: remove
                 uint64 child_page_address,
-                bool is_specific_child,
+                bool is_recovery,
                 bool use_log)
 {
    btree_node child;
-   if(is_specific_child) {
+   if(is_recovery) {
+       child.addr = child_page_address;
        btree_node_get(cc, cfg, &child, PAGE_TYPE_MEMTABLE);
        // Reset entries if partially written
 //       btree_reset_node_entries(cfg, child.hdr);
@@ -1731,8 +1735,7 @@ btree_grow_root(cache              *cc,   // IN
       cfg, root_node->hdr, 0, new_pivot, child.addr, BTREE_PIVOT_STATS_UNKNOWN);
    platform_assert(succeeded);
    btree_node_unget(cc, cfg, &child);
-    //TODO: Do not write to WAL while recovery
-   if (use_log) {
+   if (use_log && !is_recovery) {
         write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
    }
 
@@ -3645,3 +3648,4 @@ btree_config_init(btree_config *btree_cfg,
                             + max_inline_msg_size + sizeof(table_entry);
    platform_assert(max_entry_space < (page_size - sizeof(btree_hdr)) / 2);
 }
+
