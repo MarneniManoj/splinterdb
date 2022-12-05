@@ -47,7 +47,6 @@ main()
 
    int rc = splinterdb_create(&splinterdb_cfg, &spl_handle);
 
-   splinterdb_recover(spl_handle);
    printf("Created SplinterDB instance, dbname '%s'.\n\n", DB_FILE_NAME);
 
    // Insert a few kv-pairs, describing properties of fruits.
@@ -108,6 +107,7 @@ main()
       printf("Key: '%s' not found. (rc=%d)\n", fruit, rc);
    }
    printf("\n");
+   splinterdb_recover(spl_handle);
 
    printf("Shutdown and reopen SplinterDB instance ...\n");
    splinterdb_close(&spl_handle);

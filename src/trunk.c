@@ -3137,8 +3137,8 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
    }
 
    if (spl->cfg.use_log) {
-      shard_log *log = (shard_log *)spl->log;
-      shard_log_print(log);
+//      shard_log *log = (shard_log *)spl->log;
+//      shard_log_print(log);
       // slice key_slice = slice_create(trunk_key_size(spl), key);
       // int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
       // if (crappy_rc != 0) {
@@ -9276,10 +9276,13 @@ trunk_get_scratch_size()
 
 void
 read_WAL_for_recovery(trunk_handle *spl){
-    shard_log_iterator *itor;
-    uint64 addr  = log_addr(spl->log);
-    uint64 magic = log_magic(spl->log);
+    printf("read_WAL_for_recovery");
+    shard_log_iterator itor;
+//    uint64 addr  = log_addr(spl->log);
+
     shard_log *slog = (shard_log *)spl->log;
+    uint64 addr = slog->addr;
+    uint64 magic = slog->magic;
     iterator *itorh = (iterator *)&itor;
     bool at_end;
     slice              returned_key;
@@ -9288,16 +9291,20 @@ read_WAL_for_recovery(trunk_handle *spl){
     uint64 generation;
     uint64 lsn;
 
-    platform_status rc = shard_log_iterator_init((cache *)spl->cfg.cache_cfg, slog->cfg, spl->heap_id, addr, magic, &itor);
+    platform_status rc = shard_log_iterator_init(spl->cc, slog->cfg, spl->heap_id, addr, magic, &itor);
+    platform_assert_status_ok(rc);
+
     iterator_at_end(itorh, &at_end);
     for (; !at_end; ) {
         shard_log_iterator_get_curr_WAL(itorh, &returned_key, &returned_message, &page_addr, &generation, &lsn);
         printf("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n", returned_message.type, (char *)returned_key.data,
                (char *)returned_message.data.data, page_addr,
                generation, lsn);
+
         iterator_advance(itorh);
         iterator_at_end(itorh, &at_end);
     }
-//    shard_log_print((shard_log *) spl->log);
+    shard_log_print((shard_log *) spl->log);
 
 }
+
