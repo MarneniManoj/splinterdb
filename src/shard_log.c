@@ -451,6 +451,17 @@ shard_log_iterator_get_curr(iterator *itorh, slice *key, message *msg)
    *msg                     = log_entry_message(itor->entries[itor->pos]);
 }
 
+void
+shard_log_iterator_get_curr_WAL(iterator *itorh, slice *key, message *msg, uint64 *page_addr, uint64 *generation, uint64 *lsn)
+{
+    shard_log_iterator *itor = (shard_log_iterator *)itorh;
+    *key                     = log_entry_key(itor->entries[itor->pos]);
+    *msg                     = log_entry_message(itor->entries[itor->pos]);
+    *page_addr               = itor->entries[itor->pos]->page_addr;
+    *generation              = itor->entries[itor->pos]->generation;
+    *lsn                     = itor->entries[itor->pos]->lsn;
+}
+
 platform_status
 shard_log_iterator_at_end(iterator *itorh, bool *at_end)
 {
