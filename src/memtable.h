@@ -306,4 +306,15 @@ memtable_key_to_string(memtable *mt, const char *key, char *key_str)
    btree_key_to_string(mt->cfg, key_slice, key_str);
 }
 
+void
+perform_memtable_WAL_entry_operation(slice key,
+                                      message msg,
+                                      message_type msg_type,
+                                      uint64 page_addr,
+                                      uint64 generation,
+                                      uint64 lsn,
+                                      memtable_context *ctxt,
+                                      memtable *mt,
+                                      platform_heap_id hid);
+
 #endif // __MEMTABLE_H

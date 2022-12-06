@@ -1782,6 +1782,62 @@ start_over:
 
 }
 
+platform_status
+perform_brtee_WAL_entry_operation(cache              *cc,         // IN
+                                  const btree_config *cfg,        // IN
+                                  platform_heap_id    heap_id,    // IN
+                                  btree_scratch      *scratch,
+                                  mini_allocator     *mini,
+                                  slice key,
+                                  message msg,
+                                  message_type msg_type,
+                                  uint64 page_addr,
+                                  uint64 generation,
+                                  uint64 lsn){
+    // Check and redo operation
+    btree_node node;
+    node.addr = page_addr;
+
+    // Get the params from message
+    uint64 msg_len = msg.data.length;
+    char *msg_buf = (char *) msg.data.data;
+    char *delim = " ";
+    char *ptr = strtok(msg_buf, delim);
+    char * child_addr_str;
+    uint64 child_addr ;
+
+    sprintf(child_addr_str, "%s", ptr);
+    strllout
+    if(ptr != NULL)
+    {
+        printf("'%s'\n", ptr);
+
+        ptr = strtok(NULL, delim);
+    }
+
+
+    btree_node_get(cc, cfg, &node, PAGE_TYPE_MEMTABLE);
+
+
+    if (node.hdr->page_lsn < lsn){
+        // redo the operation
+        switch (msg_type){
+            case MESSAGE_TYPE_INSERT:
+                break;
+            case MESSAGE_TYPE_GROW_ROOT:
+                break;
+            case MESSAGE_TYPE_SPLIT_LEAF:
+                break;
+            case MESSAGE_TYPE_SPLIT_INDEX:
+                break;
+            default:
+                break;
+        }
+
+
+    }
+
+}
 /*
  *-----------------------------------------------------------------------------
  * btree_insert --

@@ -352,3 +352,31 @@ memtable_config_init(memtable_config *cfg,
       MEMTABLE_SPACE_OVERHEAD_FACTOR * memtable_capacity
       / cache_config_extent_size(btree_cfg->cache_cfg);
 }
+
+void
+perform_memtable_WAL_entry_operation(slice key,
+                                      message msg,
+                                      message_type msg_type,
+                                      uint64 page_addr,
+                                      uint64 generation,
+                                      uint64 lsn,
+                                      memtable_context *ctxt,
+                                      memtable *mt,
+                                      platform_heap_id hid){
+    const threadid tid = platform_get_tid();
+
+    perform_brtee_WAL_entry_operation(ctxt->cc,
+                                      ctxt->cfg.btree_cfg,
+                                      hid,
+                                      &ctxt->scratch[tid],
+                                      &mt->mini,
+                                      key,
+                                      msg,
+                                      msg_type,
+                                      page_addr,
+                                      generation,
+                                      lsn);
+
+
+
+}
