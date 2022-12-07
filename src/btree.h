@@ -468,4 +468,16 @@ btree_message_to_string(btree_config *cfg, message data, char str[static 128])
    return data_message_to_string(cfg->data_cfg, data, str, 128);
 }
 
+platform_status
+perform_brtee_WAL_entry_operation(cache              *cc,         // IN
+                                  const btree_config *cfg,        // IN
+                                  platform_heap_id    heap_id,    // IN
+                                  btree_scratch      *scratch,
+                                  mini_allocator     *mini,
+                                  slice key,
+                                  message msg,
+                                  message_type msg_type,
+                                  uint64 page_addr,
+                                  uint64 generation,
+                                  uint64 lsn);
 #endif // __BTREE_H__

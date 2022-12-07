@@ -488,6 +488,10 @@ trunk_config_init(trunk_config        *trunk_cfg,
 size_t
 trunk_get_scratch_size();
 
-void read_WAL_for_recovery(trunk_handle *spl);
+void
+read_WAL_for_recovery(trunk_handle *spl);
 
+void
+perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_type msg_type, uint64 page_addr, uint64 generation,
+                            uint64 lsn, node_type nt);
 #endif // __TRUNK_H

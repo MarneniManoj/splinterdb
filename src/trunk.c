@@ -9290,21 +9290,49 @@ read_WAL_for_recovery(trunk_handle *spl){
     uint64 page_addr;
     uint64 generation;
     uint64 lsn;
+    node_type nt;
 
     platform_status rc = shard_log_iterator_init(spl->cc, slog->cfg, spl->heap_id, addr, magic, &itor);
     platform_assert_status_ok(rc);
 
     iterator_at_end(itorh, &at_end);
     for (; !at_end; ) {
-        shard_log_iterator_get_curr_WAL(itorh, &returned_key, &returned_message, &page_addr, &generation, &lsn);
-        printf("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n", returned_message.type, (char *)returned_key.data,
+        shard_log_iterator_get_curr_WAL(itorh, &returned_key, &returned_message, &page_addr, &generation, &lsn, &nt);
+        printf("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu node type: %d\n", returned_message.type, (char *)returned_key.data,
                (char *)returned_message.data.data, page_addr,
-               generation, lsn);
-
+               generation, lsn, nt);
+        perform_WAL_entry_operation(spl, returned_key, returned_message, returned_message.type, page_addr,
+                                    generation, lsn, nt);
         iterator_advance(itorh);
         iterator_at_end(itorh, &at_end);
     }
     shard_log_print((shard_log *) spl->log);
+
+}
+
+void
+perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_type msg_type, uint64 page_addr, uint64 generation,
+                            uint64 lsn, node_type nt){
+   if (nt == NODE_TYPE_BTREE){
+       page_handle    *lock_page;
+       uint64          gen;
+       platform_status rc = memtable_maybe_rotate_and_get_insert_lock(
+               spl->mt_ctxt, &gen, &lock_page);
+
+       // this call is safe because we hold the insert lock
+       memtable *mt = trunk_get_memtable(spl, gen);
+       perform_memtable_WAL_entry_operation(key,
+                                             msg,
+                                             msg_type,
+                                             page_addr,
+                                             generation,
+                                             lsn,
+                                             spl->mt_ctxt,
+                                             mt,
+                                             spl->heap_id);
+   } else {
+       // trunk functions
+   }
 
 }
 
