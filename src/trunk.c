@@ -444,6 +444,8 @@ trunk_log_node_if_enabled(platform_stream_handle *stream,
 typedef struct ONDISK trunk_super_block {
    uint64 root_addr; // Address of the root of the trunk for the instance
                      // referenced by this superblock.
+   uint64      active_mt_addr;   //Active memtable root address, will be used during recovery.
+            //TODO Assuming 1 memtable in the context, need to update accordingly
    uint64      meta_tail;
    uint64      log_addr;
    uint64      log_meta_addr;
@@ -3101,7 +3103,28 @@ trunk_memtable_iterator_deinit(trunk_handle   *spl,
       trunk_memtable_dec_ref(spl, mt_gen);
    }
 }
+void
+trunk_super_block_update_mtaddr(trunk_handle *spl,
+                      uint64 curr_active_mt_addr)
+{
+   page_handle       *super_page;
+   trunk_super_block *super;
 
+   super_page = trunk_node_get(spl, spl->root_addr);
+   super            = (trunk_super_block *)super_page->data;
+   if(super->active_mt_addr == curr_active_mt_addr){
+      trunk_node_unget(spl, &super_page);
+      return;
+   }
+   trunk_node_claim(spl, &super_page);
+   trunk_node_lock(spl, super_page);
+
+   super->active_mt_addr = curr_active_mt_addr;
+   cache_unlock(spl->cc, super_page);
+   cache_unclaim(spl->cc, super_page);
+   cache_unget(spl->cc, super_page);
+   cache_page_sync(spl->cc, super_page, FALSE, PAGE_TYPE_SUPERBLOCK);
+}
 /*
  * Attempts to insert (key, data) into the current memtable.
  *
@@ -3116,6 +3139,7 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 {
    page_handle    *lock_page;
    uint64          generation;
+   uint64 gen_before = spl->mt_ctxt->generation;
    platform_status rc = memtable_maybe_rotate_and_get_insert_lock(
       spl->mt_ctxt, &generation, &lock_page);
    if (!SUCCESS(rc)) {
@@ -3124,6 +3148,10 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 
    // this call is safe because we hold the insert lock
    memtable *mt = trunk_get_memtable(spl, generation);
+   if(gen_before != generation){
+      platform_default_log("Update Superblock.");
+      // trunk_super_block_update_mtaddr(spl, mt->root_addr);
+   }
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
       spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation);
