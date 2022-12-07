@@ -107,7 +107,7 @@ main()
       printf("Key: '%s' not found. (rc=%d)\n", fruit, rc);
    }
    printf("\n");
-   splinterdb_recover(spl_handle);
+//   splinterdb_recover(spl_handle);
 
    printf("Shutdown and reopen SplinterDB instance ...\n");
    splinterdb_close(&spl_handle);

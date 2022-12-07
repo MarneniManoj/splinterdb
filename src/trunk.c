@@ -9316,7 +9316,7 @@ perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_t
    if (nt == NODE_TYPE_BTREE){
        page_handle    *lock_page;
        uint64          gen;
-       platform_status rc = memtable_maybe_rotate_and_get_insert_lock(
+       memtable_maybe_rotate_and_get_insert_lock(
                spl->mt_ctxt, &gen, &lock_page);
 
        // this call is safe because we hold the insert lock
