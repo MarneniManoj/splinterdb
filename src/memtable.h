@@ -14,6 +14,7 @@
 #include "task.h"
 #include "cache.h"
 #include "btree.h"
+#include "shard_log.h"
 
 #define MEMTABLE_SPACE_OVERHEAD_FACTOR (2)
 
@@ -152,7 +153,9 @@ memtable_insert(memtable_context *ctxt,
                 platform_heap_id  heap_id,
                 const char       *key,
                 message           msg,
-                uint64           *generation);
+                uint64           *generation,
+                log_handle       *log,
+                bool             use_log);
 
 page_handle *
 memtable_get_lookup_lock(memtable_context *ctxt);
@@ -302,5 +305,16 @@ memtable_key_to_string(memtable *mt, const char *key, char *key_str)
    slice key_slice = slice_create(mt->cfg->data_cfg->key_size, key);
    btree_key_to_string(mt->cfg, key_slice, key_str);
 }
+
+void
+perform_memtable_WAL_entry_operation(slice key,
+                                      message msg,
+                                      message_type msg_type,
+                                      uint64 page_addr,
+                                      uint64 generation,
+                                      uint64 lsn,
+                                      memtable_context *ctxt,
+                                      memtable *mt,
+                                      platform_heap_id hid);
 
 #endif // __MEMTABLE_H

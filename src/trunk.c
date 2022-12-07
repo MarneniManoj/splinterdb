@@ -3203,23 +3203,29 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 
    // this call is safe because we hold the insert lock
    memtable *mt = trunk_get_memtable(spl, generation);
+
    if(previous_gen != generation && spl->cfg.use_log){
       wal_log_trunk_changes(spl, spl->root_addr, TRUE, mt->root_addr);
    }
 //   trunk_super_block_update_mtaddr(spl, mt->root_addr);
+
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
-      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation);
+      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation, spl->log, spl->cfg.use_log);
+//   printf("Memtable after insertion");
+//   memtable_print(stdout, spl->cc, mt);
    if (!SUCCESS(rc)) {
       goto unlock_insert_lock;
    }
 
    if (spl->cfg.use_log) {
-//      slice key_slice = slice_create(trunk_key_size(spl), key);
-//      int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
-//      if (crappy_rc != 0) {
-//         goto unlock_insert_lock;
-//      }
+//      shard_log *log = (shard_log *)spl->log;
+//      shard_log_print(log);
+      // slice key_slice = slice_create(trunk_key_size(spl), key);
+      // int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
+      // if (crappy_rc != 0) {
+      //    goto unlock_insert_lock;
+      // }
    }
 
 unlock_insert_lock:
@@ -9352,7 +9358,7 @@ trunk_config_init(trunk_config        *trunk_cfg,
    trunk_cfg->fanout                  = fanout;
    trunk_cfg->max_branches_per_node   = max_branches_per_node;
    trunk_cfg->reclaim_threshold       = reclaim_threshold;
-   trunk_cfg->use_log                 = use_log;
+   trunk_cfg->use_log                 = TRUE;
    trunk_cfg->use_stats               = use_stats;
    trunk_cfg->verbose_logging_enabled = verbose_logging;
    trunk_cfg->log_handle              = log_handle;
@@ -9490,44 +9496,67 @@ trunk_get_scratch_size()
 {
    return sizeof(trunk_task_scratch);
 }
-void
-read_WAL_for_recovery(trunk_handle *spl)
-{
-   shard_log_iterator *itor;
-   uint64              addr  = log_addr(spl->log);
-   uint64              magic = log_magic(spl->log);
-   shard_log          *slog  = (shard_log *)spl->log;
-   iterator           *itorh = (iterator *)&itor;
-   bool                at_end;
-   slice               returned_key;
-   message             returned_message;
-   uint64              page_addr;
-   uint64              generation;
-   uint64              lsn;
-   page_handle *page = trunk_node_get(spl, spl->root_addr);
-   trunk_super_block *super = (trunk_super_block *)page->data;
 
-   platform_status rc = shard_log_iterator_init(
-      (cache *)spl->cfg.cache_cfg, slog->cfg, spl->heap_id, addr, magic, itor);
-   iterator_at_end(itorh, &at_end);
-   for (; !at_end;) {
-      shard_log_iterator_get_curr_WAL(itorh,
-                                      &returned_key,
-                                      &returned_message,
-                                      &page_addr,
-                                      &generation,
-                                      &lsn);
-      if(lsn > super->master_lsn){
-         platform_default_log("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n",
-                              returned_message.type,
-                              (char *)returned_key.data,
-                              (char *)returned_message.data.data,
-                              page_addr,
-                              generation,
-                              lsn);
-      }
-      iterator_advance(itorh);
-      iterator_at_end(itorh, &at_end);
-   }
-   //    shard_log_print((shard_log *) spl->log);
+void
+read_WAL_for_recovery(trunk_handle *spl){
+    printf("read_WAL_for_recovery");
+    shard_log_iterator itor;
+//    uint64 addr  = log_addr(spl->log);
+
+    shard_log *slog = (shard_log *)spl->log;
+    uint64 addr = slog->addr;
+    uint64 magic = slog->magic;
+    iterator *itorh = (iterator *)&itor;
+    bool at_end;
+    slice              returned_key;
+    message            returned_message;
+    uint64 page_addr;
+    uint64 generation;
+    uint64 lsn;
+    node_type nt;
+
+    platform_status rc = shard_log_iterator_init(spl->cc, slog->cfg, spl->heap_id, addr, magic, &itor);
+    platform_assert_status_ok(rc);
+
+    iterator_at_end(itorh, &at_end);
+    for (; !at_end; ) {
+        shard_log_iterator_get_curr_WAL(itorh, &returned_key, &returned_message, &page_addr, &generation, &lsn, &nt);
+        printf("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu node type: %d\n", returned_message.type, (char *)returned_key.data,
+               (char *)returned_message.data.data, page_addr,
+               generation, lsn, nt);
+        perform_WAL_entry_operation(spl, returned_key, returned_message, returned_message.type, page_addr,
+                                    generation, lsn, nt);
+        iterator_advance(itorh);
+        iterator_at_end(itorh, &at_end);
+    }
+    shard_log_print((shard_log *) spl->log);
+
 }
+
+void
+perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_type msg_type, uint64 page_addr, uint64 generation,
+                            uint64 lsn, node_type nt){
+   if (nt == NODE_TYPE_BTREE){
+       page_handle    *lock_page;
+       uint64          gen;
+       memtable_maybe_rotate_and_get_insert_lock(
+               spl->mt_ctxt, &gen, &lock_page);
+
+       // this call is safe because we hold the insert lock
+       memtable *mt = trunk_get_memtable(spl, gen);
+       perform_memtable_WAL_entry_operation(key,
+                                             msg,
+                                             msg_type,
+                                             page_addr,
+                                             generation,
+                                             lsn,
+                                             spl->mt_ctxt,
+                                             mt,
+                                             spl->heap_id);
+   } else {
+       // trunk functions
+   }
+
+}
+
+

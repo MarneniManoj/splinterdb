@@ -761,6 +761,10 @@ splinterdb_update(const splinterdb *kvsb, slice key, slice update)
    return splinterdb_insert_message(kvsb, key, msg);
 }
 
+void
+splinterdb_recover(const splinterdb *kvs){
+   read_WAL_for_recovery(kvs->spl);
+}
 /*
  *-----------------------------------------------------------------------------
  * _splinterdb_lookup_result structure --
@@ -989,3 +993,4 @@ splinterdb_stats_reset(splinterdb *kvs)
 {
    trunk_reset_stats(kvs->spl);
 }
+
