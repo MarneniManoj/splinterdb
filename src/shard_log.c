@@ -229,7 +229,6 @@ _Atomic uint64 global = 100;
 int
 shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64 *lsn)
 {
-   printf("In shard_log_write");
    shard_log             *log = (shard_log *)logh;
    cache                 *cc  = log->cc;
    shard_log_thread_data *thread_data =
@@ -287,7 +286,6 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, nod
       log_entry_message_cursor(cursor), message_data(msg), message_length(msg));
    hdr->num_entries++;
    hdr->checksum = shard_log_checksum(log->cfg, page);
-   printf("num_entries %d", hdr->num_entries);
 
    thread_data->offset += new_entry_size;
    hdr->checksum = shard_log_checksum(log->cfg, page);
@@ -363,6 +361,7 @@ shard_log_iterator_init(cache              *cc,
                         uint64              magic,
                         shard_log_iterator *itor)
 {
+   printf("shard_log_iterator_init %lu", addr);
    page_handle *page;
    uint64       i;
    uint64       pages_per_extent = shard_log_pages_per_extent(cfg);
@@ -402,12 +401,15 @@ shard_log_iterator_init(cache              *cc,
    uint64     entry_idx = 0;
    extent_addr          = addr;
    while (extent_addr != 0 && cache_get_ref(cc, extent_addr) > 0) {
+      printf("shard_log_iterator_init while");
       cache_prefetch(cc, extent_addr, PAGE_TYPE_FILTER);
       next_extent_addr = 0;
       for (i = 0; i < pages_per_extent; i++) {
          page_addr = extent_addr + i * shard_log_page_size(cfg);
          page      = cache_get(cc, page_addr, TRUE, PAGE_TYPE_LOG);
+
          if (shard_log_valid(cfg, page, magic)) {
+            printf("\n shard_log_valid");
             for (log_entry *le = first_log_entry(page->data);
                  !terminal_log_entry(cfg, page->data, le);
                  le = log_entry_next(le))

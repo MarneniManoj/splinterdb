@@ -1274,7 +1274,6 @@ static inline message create_split_message(uint64 left_child_address, uint64 rig
 
 static inline uint64 write_to_wal(log_handle *log, slice key, message msg, uint64 *generation, node_type nt, uint64 page_addr){
    uint64 lsn;
-   printf("write_to_wal: Writing to WAL");
    log_write(log,  key, msg, *generation, nt, page_addr, &lsn);
    return lsn;
 }
@@ -1367,14 +1366,13 @@ btree_split_child_leaf(cache                 *cc,
                                               BTREE_PIVOT_STATS_UNKNOWN);
       platform_assert(success);
    }
-   btree_node_full_unlock(cc, cfg, parent);
 
-   /* p: fully unlocked, c: claim, rc: write */
+   /* p: locked, c: claim, rc: write */
 
    btree_split_leaf_build_right_node(
       cfg, child->hdr, spec, plan, right_child.hdr, generation);
 
-   /* p: fully unlocked, c: claim, rc: write */
+   /* p: locked, c: claim, rc: write */
    uint64 right_child_gen = right_child.hdr->generation;
    if (use_log && !is_recovery) {
        parent->hdr->page_lsn = write_to_wal(log, spec->key, create_split_message(child->addr,
@@ -1387,6 +1385,8 @@ btree_split_child_leaf(cache                 *cc,
        child->hdr->page_lsn = parent->hdr->page_lsn;
        right_child.hdr->page_lsn = parent->hdr->page_lsn;
    }
+   btree_node_full_unlock(cc, cfg, parent);
+   /* p: fully unlocked */
    btree_node_full_unlock(cc, cfg, &right_child);
 
    /* p: fully unlocked, c: claim, rc: fully unlocked */
@@ -1537,6 +1537,20 @@ btree_split_child_index(cache              *cc,
                                right_child.addr,
                                BTREE_PIVOT_STATS_UNKNOWN);
    }
+
+   uint64 right_child_gen = child->hdr->generation;
+   if (use_log && !is_recovery)
+   {
+      parent->hdr->page_lsn = write_to_wal(log, key_to_be_inserted,
+                                           create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
+                                                                      MESSAGE_TYPE_SPLIT_INDEX),
+                                           &right_child_gen,
+                                           NODE_TYPE_BTREE,
+                                           parent->addr);
+      child->hdr->page_lsn = parent->hdr->page_lsn;
+      right_child.hdr->page_lsn = parent->hdr->page_lsn;
+   }
+
    btree_node_full_unlock(cc, cfg, parent);
 
    /* p: -, c: lock, rc: lock */
@@ -1569,18 +1583,18 @@ btree_split_child_index(cache              *cc,
    /* p:  -,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
-   uint64 right_child_gen = right_child.hdr->generation;
-   if (use_log && !is_recovery)
-    {
-        parent->hdr->page_lsn = write_to_wal(log, key_to_be_inserted,
-                     create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
-                                                MESSAGE_TYPE_SPLIT_INDEX),
-                     &right_child_gen,
-                     NODE_TYPE_BTREE,
-                     parent->addr);
-        child->hdr->page_lsn = parent->hdr->page_lsn;
-        right_child.hdr->page_lsn = parent->hdr->page_lsn;
-    }
+//   uint64 right_child_gen = right_child.hdr->generation;
+//   if (use_log && !is_recovery)
+//    {
+//        parent->hdr->page_lsn = write_to_wal(log, key_to_be_inserted,
+//                     create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
+//                                                MESSAGE_TYPE_SPLIT_INDEX),
+//                     &right_child_gen,
+//                     NODE_TYPE_BTREE,
+//                     parent->addr);
+//        child->hdr->page_lsn = parent->hdr->page_lsn;
+//        right_child.hdr->page_lsn = parent->hdr->page_lsn;
+//    }
    return 0;
 }
 
@@ -1738,11 +1752,12 @@ btree_grow_root(cache              *cc,   // IN
    bool succeeded = btree_set_index_entry(
       cfg, root_node->hdr, 0, new_pivot, child.addr, BTREE_PIVOT_STATS_UNKNOWN);
    platform_assert(succeeded);
-   btree_node_unget(cc, cfg, &child);
    if (use_log && !is_recovery) {
-       root_node->hdr->page_lsn = write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
-       child.hdr->page_lsn = root_node->hdr->page_lsn;
+      root_node->hdr->page_lsn = write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
+      child.hdr->page_lsn = root_node->hdr->page_lsn;
    }
+   btree_node_unget(cc, cfg, &child);
+
 
    return 0;
 }
