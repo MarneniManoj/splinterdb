@@ -1368,6 +1368,7 @@ uint64 getTparent(clockcache *cc,uint64 addr){
       trunk_hdr* hdr = (trunk_hdr *)node->data;
       paddr=addr;
       addr=hdr->parent_addr;
+      cache_unget(&cc->super,node);
       printf("ADS : %lu ---> %lu \n",paddr,addr);
    }
    return paddr;
@@ -1380,25 +1381,33 @@ bool isunmapped(clockcache *cc,uint64 addr){
 
 void getalldirty(clockcache *cc,uint64 addr,uint64* dirty, uint32 *count){
 
+   if(isunmapped(cc,addr))
+      return;
+
    if(!isunmapped(cc,addr) && !Isdirty(cc,addr))
       return;
 
-   dirty[(*count)++]=addr;
+   
    page_handle* node= cache_get(&cc->super,addr,FALSE,PAGE_TYPE_TRUNK);
    trunk_hdr* hdr = (trunk_hdr *)node->data;
    debug_assert(hdr->num_pivot_keys >= 2);
    uint32 num_children = hdr->num_pivot_keys - 1;
-
+   //Doing inorder here;
    if (hdr->height != 0) {
-
       printf("num_childeren %u\n",num_children);
       for (uint32 i = 0; i < num_children; i++) {
          trunk_pivot_data *data = trunk_get_pivot_data_(node, i);
-         printf("GET_PIVOT_DATA %u   %lu\n",*count, data->addr);
-         getalldirty(cc,data->addr,dirty,count);
+         if(data->flush_sequence<hdr->persisted_flush_sequence){
+            getalldirty(cc,data->addr,dirty,count);
+         }
+         printf("GET_PIVOT_DATA %u   %lu\n",*count, addr);
+         dirty[(*count)++]=addr;
+         if(data->flush_sequence>hdr->persisted_flush_sequence){
+            getalldirty(cc,data->addr,dirty,count);
+         }
       }
    }
-   //cache_unget(spl->cc, node);
+   cache_unget(&cc->super,node);
 }
 
 void cleanSinglePage(clockcache *cc, uint64 addr){
@@ -1432,37 +1441,30 @@ void cleanSinglePage(clockcache *cc, uint64 addr){
                               addr);
       iovec[i].iov_base = next_entry->page.data;
    }
-
    status = io_write_async(
       cc->io, req, clockcache_write_callback, req_count, first_addr);
    platform_assert_status_ok(status);
+   printf("IO requirement DONE for %lu\n\n",addr);
 }
 
-void flushinorder(clockcache *cc,uint64 *dirty, uint32 counter){
+void flushinorder(clockcache *cc,uint64 *dirty, uint32 *counter){
    //first flush the new nodes created.
 
-   uint64 root_addr=dirty[0],addr;
-   //clockcache_entry *entry=clockcache_lookup_entry(cc, root_addr);
-   page_handle* pnode= cache_get(&cc->super,root_addr,FALSE,PAGE_TYPE_TRUNK);
-   trunk_hdr* phdr = (trunk_hdr *)pnode->data;
-   for(uint32 i=1;i<counter;i++){
-      addr=dirty[i];
-      page_handle* node= cache_get(&cc->super,addr,FALSE,PAGE_TYPE_TRUNK);
-      trunk_hdr* hdr = (trunk_hdr *)node->data;
-      if(hdr->tail_flush_sequence > phdr->persisted_flush_sequence){
+   // uint64 root_addr=dirty[0],addr;
+   // //clockcache_entry *entry=clockcache_lookup_entry(cc, root_addr);
+   // page_handle* pnode= cache_get(&cc->super,root_addr,FALSE,PAGE_TYPE_TRUNK);
+   // trunk_hdr* phdr = (trunk_hdr *)pnode->data;
+   printf("ordre %u\n",*counter);
+   for(int i=(*counter)-1;i>=0;i--){
+         printf("iter : %u %d \n",i,*counter);
+         uint64 addr=dirty[i];
+         printf("flushaddr:\t%lu\n\n",addr);
+         page_handle* node= cache_get(&cc->super,addr,FALSE,PAGE_TYPE_TRUNK);
          cleanSinglePage(cc,dirty[i]);
+         cache_unget(&cc->super,node);
       }
    }
-   cleanSinglePage(cc,root_addr);
-   for(uint32 i=1;i<counter;i++){
-      addr=dirty[i];
-      page_handle* node= cache_get(&cc->super,addr,FALSE,PAGE_TYPE_TRUNK);
-      trunk_hdr* hdr = (trunk_hdr *)node->data;
-      if(hdr->tail_flush_sequence < phdr->persisted_flush_sequence){
-         cleanSinglePage(cc,dirty[i]);
-      }
-   }
-}
+
 
 /*
  *----------------------------------------------------------------------
@@ -1529,23 +1531,21 @@ clockcache_batch_start_writeback(clockcache *cc, uint64 batch, bool is_urgent)
             uint64 dirty[MAX_TRUNKS];
             memset(dirty, 0, MAX_TRUNKS*sizeof(dirty[0]));
             uint32 counter=0;
-            printf("DIRTY_COUNTER0%u\n",counter);
             getalldirty(cc,addr,dirty,&counter);
-            flushinorder(cc,dirty,counter);
+            printf("DIRTY_COUNTER %u\n......Now flushing starts\n",counter);
+            flushinorder(cc,dirty,&counter);
 
-            printf("DIRTY_COUNTER %u\n",counter);
-
-            printf("entry number: %u, is getting evicted which is of type TRUNK\n",entry_no);
-            printf("evict_hand: %u, free_hand: %u\n",cc->free_hand,cc->evict_hand);
-            page_handle* cnode= cache_get(&cc->super,addr,FALSE,entry->type);
-            trunk_hdr* hdr1 = (trunk_hdr *)cnode->data;
-            page_handle* phandle = &entry->page;
-            trunk_hdr *hdr =(trunk_hdr *)phandle->data;
-            assert(hdr==hdr1);
-            if(hdr==hdr1){
-               printf("its same.................../n");
-            }
-            printf("number of pivot keyes are: %hu, generation no: %lu, tail_flush_sequence: %hu, persisted_flush_sequence:%hu \n",hdr->num_pivot_keys, hdr->generation,hdr->tail_flush_sequence,hdr->persisted_flush_sequence);
+            // printf("entry number: %u, is getting evicted which is of type TRUNK\n",entry_no);
+            // printf("evict_hand: %u, free_hand: %u\n",cc->free_hand,cc->evict_hand);
+            // page_handle* cnode= cache_get(&cc->super,addr,FALSE,entry->type);
+            // trunk_hdr* hdr1 = (trunk_hdr *)cnode->data;
+            // page_handle* phandle = &entry->page;
+            // trunk_hdr *hdr =(trunk_hdr *)phandle->data;
+            // assert(hdr==hdr1);
+            // if(hdr==hdr1){
+            //    printf("its same.................../n");
+            // }
+            // printf("number of pivot keyes are: %hu, generation no: %lu, tail_flush_sequence: %hu, persisted_flush_sequence:%hu \n",hdr->num_pivot_keys, hdr->generation,hdr->tail_flush_sequence,hdr->persisted_flush_sequence);
             //flushin_sequence(hdr,phandle,addr);
          }
 

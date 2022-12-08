@@ -14,7 +14,7 @@
 
 #define DB_FILE_NAME    "splinterdb_intro_db"
 #define DB_FILE_SIZE_MB 1024 // Size of SplinterDB device; Fixed when created
-#define CACHE_SIZE_MB   64   // Size of cache; can be changed across boots
+#define CACHE_SIZE_MB   32   // Size of cache; can be changed across boots
 
 /* Application declares the limit of key-sizes it intends to use */
 #define USER_MAX_KEY_SIZE ((int)70)
@@ -68,7 +68,7 @@ main()
    rc    = splinterdb_insert(spl_handle, key, value);
    printf("Inserted key '%s'\n", fruit);
 
-     for (int i = 0; i <= 400000; ++i) {
+     for (int i = 0; i <= 40000; ++i) {
       char buf[12];
       snprintf(buf, 12, "%d", i);
       fruit = buf;
