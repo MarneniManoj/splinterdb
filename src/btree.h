@@ -279,7 +279,7 @@ btree_block_dec_ref(cache *cc, btree_config *cfg, uint64 root_addr);
 void
 btree_unblock_dec_ref(cache *cc, btree_config *cfg, uint64 root_addr);
 
-uint8
+uint32
 btree_inc_tail_flush_generation(btree_hdr *hdr);
 
 void

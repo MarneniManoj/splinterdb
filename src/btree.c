@@ -1248,10 +1248,10 @@ btree_unblock_dec_ref(cache *cc, btree_config *cfg, uint64 root_addr)
    mini_unblock_dec_ref(cc, meta_head);
 }
 
-uint8
+uint32
 btree_inc_tail_flush_generation(btree_hdr *hdr)
 {
-    platform_assert(hdr->tail_flush_sequence+1 <= UINT8_MAX);
+    platform_assert(hdr->tail_flush_sequence+1 <= UINT32_MAX);
     return hdr->tail_flush_sequence++;
 }
 
