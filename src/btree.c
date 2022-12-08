@@ -71,7 +71,8 @@ static const btree_pivot_stats BTREE_PIVOT_STATS_UNKNOWN = {
    BTREE_UNKNOWN_COUNTER,
    BTREE_UNKNOWN_COUNTER};
 
-
+uint32
+btree_inc_tail_flush_generation(btree_hdr *hdr);
 static inline uint8
 btree_height(const btree_hdr *hdr)
 {
@@ -101,9 +102,11 @@ static inline void
 btree_reset_node_entries(const btree_config *cfg, btree_hdr *hdr)
 {
    hdr->num_entries = 0;
+   hdr->persisted_sequence = 0;
+   hdr->tail_sequence = 0;
    hdr->next_entry  = btree_page_size(cfg);
 }
-
+void btree_adjust_flush_sequence(btree_hdr *node_hdr, const btree_config *cfg);
 
 static inline uint64
 index_entry_size(const slice key)
@@ -183,6 +186,7 @@ btree_fill_index_entry(const btree_config *cfg,
    entry->key_size              = slice_length(new_pivot_key);
    entry->key_indirect          = FALSE;
    entry->pivot_data.child_addr = new_addr;
+   entry->flush_sequence         = btree_inc_tail_flush_generation(hdr);
    entry->pivot_data.stats      = stats;
 }
 
@@ -237,9 +241,15 @@ btree_set_index_entry(const btree_config *cfg,
    hdr->offsets[k]  = diff_ptr(hdr, new_entry);
    hdr->num_entries = new_num_entries;
    hdr->next_entry  = diff_ptr(hdr, new_entry);
+   btree_adjust_flush_sequence(hdr, cfg);
    return TRUE;
 }
-
+uint32
+btree_inc_tail_flush_generation(btree_hdr *hdr)
+{
+   platform_assert(hdr->tail_sequence+1 <= UINT32_MAX);
+   return hdr->tail_sequence++;
+}
 static inline bool
 btree_insert_index_entry(const btree_config *cfg,
                          btree_hdr          *hdr,
@@ -357,7 +367,7 @@ btree_set_leaf_entry(const btree_config *cfg,
    hdr->num_entries = new_num_entries;
    hdr->next_entry  = diff_ptr(hdr, new_entry);
    platform_assert(0 < hdr->num_entries);
-
+   btree_adjust_flush_sequence(hdr, cfg);
    return TRUE;
 }
 
@@ -694,6 +704,7 @@ btree_truncate_leaf(const btree_config *cfg, // IN
 
    hdr->num_entries = target_entries;
    hdr->next_entry  = new_next_entry;
+   btree_adjust_flush_sequence(hdr, cfg);
 }
 
 /*
@@ -994,7 +1005,7 @@ btree_truncate_index(const btree_config *cfg, // IN
    hdr->num_entries = target_entries;
    hdr->next_entry  = new_next_entry;
    hdr->generation++;
-
+   btree_adjust_flush_sequence(hdr, cfg);
    if (new_next_entry < BTREE_DEFRAGMENT_THRESHOLD(btree_page_size(cfg))) {
       btree_defragment_index(cfg, scratch, hdr);
    }
@@ -1738,8 +1749,11 @@ btree_grow_root(cache              *cc,   // IN
 
    // copy root to child
    memmove(child.hdr, root_node->hdr, btree_page_size(cfg));
-   btree_node_unlock(cc, cfg, &child);
-   btree_node_unclaim(cc, cfg, &child);
+   if(!is_recovery){
+      btree_node_unlock(cc, cfg, &child);
+      btree_node_unclaim(cc, cfg, &child);
+   }
+
 
    btree_reset_node_entries(cfg, root_node->hdr);
    btree_increment_height(root_node->hdr);
@@ -1762,6 +1776,81 @@ btree_grow_root(cache              *cc,   // IN
    return 0;
 }
 
+/*This method will adjust the values of pivot flush sequence and node tail and persisted flush sequence
+ * such that they remain in bounds of uint8, this re-adjustment should maintain
+ * pdata->flush_sequence (><=) node_hdr->persisted_flush_sequence
+ * */
+//void trunk_adjust_flush_sequence(trunk_handle *spl, page_handle *node){
+//   int num_persisted_pivots = 0;
+//   trunk_hdr* node_hdr = (trunk_hdr*)node->data;
+//   uint16 num_children = trunk_num_pivot_keys(spl, node) - 1;
+//   for (uint16 pivot_no = 0; pivot_no < num_children;
+//        pivot_no++)
+//   {
+//      trunk_pivot_data *pdata = trunk_get_pivot_data(spl, node, pivot_no);
+//      if(pdata->flush_sequence < node_hdr->persisted_flush_sequence){
+//         num_persisted_pivots++;
+//      }
+//   }
+//
+//   int unpersisted_fs = num_persisted_pivots;
+//   int persisted_fs = 0;
+//   for (uint16 pivot_no = 0; pivot_no < num_children;
+//        pivot_no++)
+//   {
+//      trunk_pivot_data *pdata = trunk_get_pivot_data(spl, node, pivot_no);
+//      if(pdata->flush_sequence < node_hdr->persisted_flush_sequence){
+//         pdata->flush_sequence = persisted_fs++;
+//      }else {
+//         pdata->flush_sequence = unpersisted_fs++;
+//      }
+//   }
+//
+//   platform_assert(persisted_fs == num_persisted_pivots);
+//   platform_assert(unpersisted_fs == num_children);
+//   node_hdr->persisted_flush_sequence = persisted_fs;
+//   node_hdr->tail_flush_sequence = unpersisted_fs;
+//
+//}
+
+/*This method will adjust the values of pivot flush sequence and node tail and persisted flush sequence
+ * such that they remain in bounds of uint8, this re-adjustment should maintain
+ * pdata->flush_sequence (><=) node_hdr->persisted_flush_sequence
+ * */
+void btree_adjust_flush_sequence(btree_hdr *node_hdr, const btree_config *cfg){
+   int num_persisted_pivots = 0;
+   uint16 num_children = btree_num_entries(node_hdr);
+
+   index_entry *parent_entry;
+   for (uint16 pivot_no = 0; pivot_no < num_children;
+        pivot_no++)
+   {
+      parent_entry = btree_get_index_entry(cfg, node_hdr, pivot_no);
+      if(parent_entry->flush_sequence < node_hdr->persisted_sequence){
+         num_persisted_pivots++;
+      }
+   }
+
+   int unpersisted_fs = num_persisted_pivots;
+   int persisted_fs = 0;
+   for (uint16 pivot_no = 0; pivot_no < num_children;
+        pivot_no++)
+   {
+      parent_entry = btree_get_index_entry(cfg, node_hdr, pivot_no);
+      if(parent_entry->flush_sequence < node_hdr->persisted_sequence){
+         parent_entry->flush_sequence = persisted_fs++;
+      }else {
+         parent_entry->flush_sequence = unpersisted_fs++;
+      }
+   }
+
+
+   platform_assert(persisted_fs == num_persisted_pivots);
+   platform_assert(unpersisted_fs == num_children);
+   node_hdr->persisted_sequence = persisted_fs;
+   node_hdr->tail_sequence = unpersisted_fs;
+
+}
 platform_status insert_key_to_btree_node(cache *cc,
                                          const btree_config *cfg,
                                          platform_heap_id heap_id,

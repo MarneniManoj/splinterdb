@@ -41,6 +41,8 @@ struct ONDISK btree_hdr {
    uint64      generation;
    uint8       height;
    uint64      page_lsn;  // Log Sequence Number(LSN) corresponding to the newest update on the page
+   uint32      tail_sequence;
+   uint32      persisted_sequence;
    node_offset next_entry;
    table_index num_entries;
    table_entry offsets[];
@@ -54,6 +56,7 @@ struct ONDISK btree_hdr {
 #define INDIRECT_FLAG_BITS (1)
 typedef struct ONDISK index_entry {
    // clang-format off
+   uint32               flush_sequence;
    btree_pivot_data     pivot_data;
    inline_key_size      key_size     : bitsizeof(inline_key_size) - INDIRECT_FLAG_BITS;
    /* Indirect keys are not currently implemented, but this field is
@@ -65,7 +68,7 @@ typedef struct ONDISK index_entry {
 
 _Static_assert(sizeof(index_entry)
                   == sizeof(uint64) + 3 * sizeof(uint32)
-                        + sizeof(inline_key_size),
+                        + sizeof(inline_key_size) + sizeof(uint32),
                "index_entry has wrong size");
 _Static_assert(offsetof(index_entry, key) == sizeof(index_entry),
                "index_entry key has wrong offset");
