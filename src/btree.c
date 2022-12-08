@@ -1255,6 +1255,53 @@ btree_inc_tail_flush_generation(btree_hdr *hdr)
     return hdr->tail_flush_sequence++;
 }
 
+/*This method will adjust the values of pivot flush sequence and node tail and persisted flush sequence
+ * such that they remain in bounds of uint8, this re-adjustment should maintain
+ * pdata->flush_sequence (><=) node_hdr->persisted_flush_sequence
+ * */
+void btree_adjust_flush_sequence(btree_hdr *node_hdr, const btree_config *cfg){
+   int num_persisted_pivots = 0;
+   uint64 num_children = btree_num_entries(node_hdr);
+   printf("num_children: %lu", num_children);
+
+   index_entry *parent_entry;
+   for (uint16 pivot_no = 0; pivot_no < num_children;
+        pivot_no++)
+   {
+      parent_entry = btree_get_index_entry(cfg, node_hdr, pivot_no);
+      if(parent_entry->pivot_data.flush_sequence < node_hdr->persisted_flush_sequence){
+         num_persisted_pivots++;
+      }
+   }
+
+   int unpersisted_fs = num_persisted_pivots;
+   int persisted_fs = 0;
+   for (uint16 pivot_no = 0; pivot_no < num_children;
+        pivot_no++)
+   {
+      parent_entry = btree_get_index_entry(cfg, node_hdr, pivot_no);
+      if(parent_entry->pivot_data.flush_sequence < node_hdr->persisted_flush_sequence){
+         parent_entry->pivot_data.flush_sequence = persisted_fs++;
+      }else {
+         parent_entry->pivot_data.flush_sequence = unpersisted_fs++;
+      }
+   }
+   if (persisted_fs != num_persisted_pivots){
+      printf("\n num_entries %lu, persisted_fs: %d, num_persisted_pivots: %d, unpersisted_fs: %d",num_children,persisted_fs,
+             num_persisted_pivots,  unpersisted_fs);
+   }
+   if (unpersisted_fs != num_children){
+      printf("\n num_entries %lu, persisted_fs: %d, num_persisted_pivots: %d, unpersisted_fs: %d",num_children,persisted_fs,
+             num_persisted_pivots,  unpersisted_fs);
+   }
+
+   platform_assert(persisted_fs == num_persisted_pivots);
+   platform_assert(unpersisted_fs == num_children);
+   node_hdr->persisted_flush_sequence = persisted_fs;
+   node_hdr->tail_flush_sequence = unpersisted_fs;
+
+}
+
 static inline message create_grow_root_message(uint64 child_address){
    char child_addr[20];
    sprintf(child_addr, "%lu", child_address);
@@ -1394,6 +1441,9 @@ btree_split_child_leaf(cache                 *cc,
        child->hdr->page_lsn = parent->hdr->page_lsn;
        right_child.hdr->page_lsn = parent->hdr->page_lsn;
    }
+   btree_adjust_flush_sequence(parent->hdr, cfg);
+   btree_adjust_flush_sequence(right_child.hdr, cfg);
+
    btree_node_full_unlock(cc, cfg, parent);
    /* p: fully unlocked */
    btree_node_full_unlock(cc, cfg, &right_child);
@@ -1401,6 +1451,7 @@ btree_split_child_leaf(cache                 *cc,
    /* p: fully unlocked, c: claim, rc: fully unlocked */
 
    btree_node_lock(cc, cfg, child);
+   btree_adjust_flush_sequence(child->hdr, cfg);
    btree_split_leaf_cleanup_left_node(
       cfg, scratch, child->hdr, spec, plan, right_child.addr);
    if (plan.insertion_goes_left) {
@@ -1559,6 +1610,11 @@ btree_split_child_index(cache              *cc,
       child->hdr->page_lsn = parent->hdr->page_lsn;
       right_child.hdr->page_lsn = parent->hdr->page_lsn;
    }
+   btree_adjust_flush_sequence(parent->hdr, cfg);
+   btree_adjust_flush_sequence(child->hdr, cfg);
+   btree_node_claim(cc, cfg, &right_child);
+   btree_node_lock(cc, cfg, &right_child);
+   btree_adjust_flush_sequence(right_child.hdr, cfg);
 
    btree_node_full_unlock(cc, cfg, parent);
 
@@ -1592,18 +1648,7 @@ btree_split_child_index(cache              *cc,
    /* p:  -,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
-//   uint64 right_child_gen = right_child.hdr->generation;
-//   if (use_log && !is_recovery)
-//    {
-//        parent->hdr->page_lsn = write_to_wal(log, key_to_be_inserted,
-//                     create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
-//                                                MESSAGE_TYPE_SPLIT_INDEX),
-//                     &right_child_gen,
-//                     NODE_TYPE_BTREE,
-//                     parent->addr);
-//        child->hdr->page_lsn = parent->hdr->page_lsn;
-//        right_child.hdr->page_lsn = parent->hdr->page_lsn;
-//    }
+
    return 0;
 }
 
@@ -1761,6 +1806,14 @@ btree_grow_root(cache              *cc,   // IN
    bool succeeded = btree_set_index_entry(
       cfg, root_node->hdr, 0, new_pivot, child.addr, BTREE_PIVOT_STATS_UNKNOWN);
    platform_assert(succeeded);
+
+   btree_node_claim(cc, cfg, &child);
+   btree_node_lock(cc, cfg, &child);
+   btree_adjust_flush_sequence(root_node->hdr, cfg);
+   btree_adjust_flush_sequence(child.hdr, cfg);
+   btree_node_unlock(cc, cfg, &child);
+   btree_node_unclaim(cc, cfg, &child);
+
    if (use_log && !is_recovery) {
       root_node->hdr->page_lsn = write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
       child.hdr->page_lsn = root_node->hdr->page_lsn;

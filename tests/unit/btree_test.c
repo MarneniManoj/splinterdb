@@ -295,6 +295,9 @@ index_hdr_tests(btree_config *cfg, btree_scratch *scratch, platform_heap_id hid)
    for (uint32 i = 0; i < nkvs; i++) {
       rv = btree_set_index_entry(
          cfg, hdr, i, slice_create(i % sizeof(i), &i), i, stats);
+      if (i % 50 == 0){
+         btree_adjust_flush_sequence(hdr, cfg);
+      }
       ASSERT_TRUE(rv, "Failed to insert 4-byte %d\n", i);
    }
 
@@ -310,6 +313,9 @@ index_hdr_tests(btree_config *cfg, btree_scratch *scratch, platform_heap_id hid)
    for (uint64 i = 0; i < nkvs; i++) {
       rv = btree_set_index_entry(
          cfg, hdr, i, slice_create(i % sizeof(i), &i), i, stats);
+      if (i % 50 == 0){
+         btree_adjust_flush_sequence(hdr, cfg);
+      }
       ASSERT_TRUE(rv, "Failed to insert 8-byte %ld\n", i);
    }
 

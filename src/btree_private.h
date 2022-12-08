@@ -41,8 +41,8 @@ struct ONDISK btree_hdr {
    uint64      generation;
    uint8       height;
    uint64      page_lsn;  // Log Sequence Number(LSN) corresponding to the newest update on the page
-   uint8       tail_flush_sequence;      //Latest sequence used to determine flush order of nodes
-   uint8       persisted_flush_sequence;   //Last flush sequence that is persisted to disk
+   uint32       tail_flush_sequence;      //Latest sequence used to determine flush order of nodes
+   uint32       persisted_flush_sequence;   //Last flush sequence that is persisted to disk
    node_offset next_entry;
    table_index num_entries;
    table_entry offsets[];
@@ -67,7 +67,7 @@ typedef struct ONDISK index_entry {
 
 _Static_assert(sizeof(index_entry)
                   == sizeof(uint64) + 3 * sizeof(uint32)
-                        + sizeof(inline_key_size),
+                        + sizeof(inline_key_size) + sizeof(uint32),
                "index_entry has wrong size");
 _Static_assert(offsetof(index_entry, key) == sizeof(index_entry),
                "index_entry key has wrong offset");

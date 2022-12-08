@@ -536,10 +536,10 @@ shard_log_print(shard_log *log)
                  !terminal_log_entry(cfg, page->data, le);
                  le = log_entry_next(le))
             {
-               platform_default_log("%s -- %s : %lu\n",
-                                    key_string(dcfg, log_entry_key(le)),
-                                    message_string(dcfg, log_entry_message(le)),
-                                    le->generation);
+//               platform_default_log("%s -- %s : %lu\n",
+//                                    key_string(dcfg, log_entry_key(le)),
+//                                    message_string(dcfg, log_entry_message(le)),
+//                                    le->generation);
 //               platform_default_log("\nread log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n", log_entry_message(le).type, (char *)log_entry_key(le).data,
 //                      (char *)log_entry_message(le).data.data, le->page_addr,
 //                      le->generation, le->lsn);
