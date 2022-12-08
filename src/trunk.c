@@ -6074,6 +6074,17 @@ trunk_range_iterator_advance(iterator *itor);
 void
 trunk_range_iterator_deinit(trunk_range_iterator *range_itor);
 
+void
+                          process_memtable_split_index(trunk_handle *spl,
+                                                       uint64        addr,
+                                                       message       msg,
+                                                       uint64        lsn);
+void
+parseAddr(message message1, uint64 *left_addr, uint64 *right_addr);
+void
+                          unlockclaimget(trunk_handle *spl, page_handle **page);
+page_handle                           *
+claim_and_lock(trunk_handle *spl, page_handle **page);
 const static iterator_ops trunk_range_iterator_ops = {
    .get_curr = trunk_range_iterator_get_curr,
    .at_end   = trunk_range_iterator_at_end,
@@ -9591,6 +9602,7 @@ perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_t
             process_memtable_split_root(spl, page_addr, msg, lsn);
             break ;
          case MESSAGE_TYPE_SPLIT_INDEX:
+            process_memtable_split_index(spl, page_addr, msg, lsn);
             break ;
          case MESSAGE_TYPE_SPLIT_LEAF:
             break ;
@@ -9600,6 +9612,60 @@ perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_t
       }
    }
 
+}
+void
+process_memtable_split_index(trunk_handle *spl,
+                             uint64        addr,
+                             message       msg,
+                             uint64        log_entry_lsn)
+{
+   page_handle *page = trunk_node_get(spl, addr);
+   trunk_hdr *root = (trunk_hdr *)page->data;
+   if(root->page_lsn >= log_entry_lsn){
+      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
+      trunk_node_unget(spl, &page);
+      return ;
+   }
+   trunk_node_claim(spl, &page);
+   trunk_node_lock(spl, page);
+
+   uint64 *left_addr;
+   uint64 *right_addr;
+   parseAddr(msg, left_addr, right_addr);
+
+   page_handle *left_node = trunk_node_get(spl, *left_addr);
+   page_handle *right_node = trunk_node_get(spl, *right_addr);
+   uint16       target_num_children = trunk_num_children(spl, left_node) / 2;
+   trunk_pivot_data *pdata ;
+   //Find pivot with address
+   uint16 pivot_no = 0;
+   for (; pivot_no < trunk_num_pivot_keys(spl, page) - 1;
+        pivot_no++)
+   {
+      pdata = trunk_get_pivot_data(spl, page, pivot_no);
+      if (pdata->addr == *left_addr) {
+         break ;
+      }
+   }
+   platform_assert(pdata->addr == *left_addr);
+   platform_assert(pivot_no != trunk_num_pivot_keys(spl, page) - 1);
+
+   left_node = claim_and_lock(spl, &left_node);
+   right_node = claim_and_lock(spl, &right_node);
+
+   trunk_split_index_given_rightnode(spl, page, pivot_no, left_node, target_num_children, right_node);
+
+
+   unlockclaimget(spl, &right_node);
+   unlockclaimget(spl, &left_node);
+   unlockclaimget(spl, &page);
+
+}
+void
+parseAddr(message msg, uint64 *left_addr, uint64 *right_addr)
+{
+   char *addr = (char *)message_data(msg);
+   sscanf( addr , "%lu %lu" , left_addr, right_addr);
 }
 
 uint64
@@ -9624,8 +9690,7 @@ process_memtable_split_root(trunk_handle *spl,
       trunk_node_unget(spl, &page);
       return ;
    }
-   trunk_node_claim(spl, &page);
-   trunk_node_lock(spl, page);
+   page = claim_and_lock(spl, &page);
 
    uint64 child_addr = parseInt(message1);
    page_handle *child = trunk_node_get(spl, child_addr);
@@ -9634,13 +9699,22 @@ process_memtable_split_root(trunk_handle *spl,
 
    trunk_grow_root(spl, page, child);
 
-   trunk_node_unlock(spl, child);
-   trunk_node_unclaim(spl, child);
-   trunk_node_unget(spl, &child);
-
-   trunk_node_unlock(spl, page);
-   trunk_node_unclaim(spl, page);
-   trunk_node_unget(spl, &page);
+   unlockclaimget(spl, &child);
+   unlockclaimget(spl, &page);
+}
+page_handle *
+claim_and_lock(trunk_handle *spl, page_handle **page)
+{
+   trunk_node_claim(spl, page);
+   trunk_node_lock(spl, (*page));
+   return (*page);
+}
+void
+unlockclaimget(trunk_handle *spl, page_handle **page)
+{
+   trunk_node_unlock(spl, (*page));
+   trunk_node_unclaim(spl, (*page));
+   trunk_node_unget(spl, page);
 }
 
 
