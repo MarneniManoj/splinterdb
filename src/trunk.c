@@ -9530,9 +9530,13 @@ read_WAL_for_recovery(trunk_handle *spl){
     uint64 page_addr;
     uint64 generation;
     uint64 lsn;
+    uint64 master_lsn;
     node_type nt;
 
-    trunk_super_block  *super = (trunk_super_block  *)spl->root_addr;
+    page_handle  *spage = trunk_node_get(spl, spl->root_addr);
+    trunk_super_block  *super = (trunk_super_block *)spage->data;
+    master_lsn = super->master_lsn;
+    trunk_node_unget(spl, &spage);
 
     platform_status rc = shard_log_iterator_init(spl->cc, slog->cfg, spl->heap_id, addr, magic, &itor);
     platform_assert_status_ok(rc);
@@ -9541,7 +9545,7 @@ read_WAL_for_recovery(trunk_handle *spl){
     for (; !at_end; ) {
         shard_log_iterator_get_curr_WAL(itorh, &returned_key, &returned_message, &page_addr, &generation, &lsn, &nt);
 
-        if(lsn > super->master_lsn ){
+        if(lsn > master_lsn ){
            platform_default_log("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu node type: %d\n", returned_message.type, (char *)returned_key.data,
                                 (char *)returned_message.data.data, page_addr,
                                 generation, lsn, nt);
@@ -9553,8 +9557,6 @@ read_WAL_for_recovery(trunk_handle *spl){
         iterator_advance(itorh);
         iterator_at_end(itorh, &at_end);
     }
-    shard_log_print((shard_log *) spl->log);
-
 }
 
 void

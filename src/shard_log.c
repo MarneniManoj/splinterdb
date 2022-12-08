@@ -413,7 +413,6 @@ shard_log_iterator_init(cache              *cc,
    uint64     entry_idx = 0;
    extent_addr          = addr;
    while (extent_addr != 0 && cache_get_ref(cc, extent_addr) > 0) {
-      printf("shard_log_iterator_init while");
       cache_prefetch(cc, extent_addr, PAGE_TYPE_FILTER);
       next_extent_addr = 0;
       for (i = 0; i < pages_per_extent; i++) {
@@ -421,7 +420,6 @@ shard_log_iterator_init(cache              *cc,
          page      = cache_get(cc, page_addr, TRUE, PAGE_TYPE_LOG);
 
          if (shard_log_valid(cfg, page, magic)) {
-            printf("\n shard_log_valid");
             for (log_entry *le = first_log_entry(page->data);
                  !terminal_log_entry(cfg, page->data, le);
                  le = log_entry_next(le))
@@ -536,13 +534,13 @@ shard_log_print(shard_log *log)
                  !terminal_log_entry(cfg, page->data, le);
                  le = log_entry_next(le))
             {
-               platform_default_log("%s -- %s : %lu\n",
-                                    key_string(dcfg, log_entry_key(le)),
-                                    message_string(dcfg, log_entry_message(le)),
-                                    le->generation);
-//               platform_default_log("\nread log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n", log_entry_message(le).type, (char *)log_entry_key(le).data,
-//                      (char *)log_entry_message(le).data.data, le->page_addr,
-//                      le->generation, le->lsn);
+               // platform_default_log("%s -- %s : %lu\n",
+               //                      key_string(dcfg, log_entry_key(le)),
+               //                      message_string(dcfg, log_entry_message(le)),
+               //                      le->generation);
+              platform_default_log("\nread log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n", log_entry_message(le).type, (char *)log_entry_key(le).data,
+                     (char *)log_entry_message(le).data.data, le->page_addr,
+                     le->generation, le->lsn);
 
             }
          }
