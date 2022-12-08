@@ -41,6 +41,8 @@ struct ONDISK btree_hdr {
    uint64      generation;
    uint8       height;
    uint64      page_lsn;  // Log Sequence Number(LSN) corresponding to the newest update on the page
+   uint8       tail_flush_sequence;      //Latest sequence used to determine flush order of nodes
+   uint8       persisted_flush_sequence;   //Last flush sequence that is persisted to disk
    node_offset next_entry;
    table_index num_entries;
    table_entry offsets[];

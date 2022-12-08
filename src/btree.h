@@ -123,6 +123,9 @@ typedef struct ONDISK btree_pivot_stats {
 
 typedef struct ONDISK btree_pivot_data {
    uint64            child_addr;
+   // If  flush_sequence >= persisted_flush_sequence, children corresponding to such pivots should be flushed
+   // before flushing this node to disk. Once this parent is flushed then other dirty child nodes can be flushed.
+   uint8 flush_sequence;      // Tail flush sequence number at the time of child generation
    btree_pivot_stats stats;
 } btree_pivot_data;
 
@@ -275,6 +278,9 @@ btree_block_dec_ref(cache *cc, btree_config *cfg, uint64 root_addr);
 
 void
 btree_unblock_dec_ref(cache *cc, btree_config *cfg, uint64 root_addr);
+
+uint8
+btree_inc_tail_flush_generation(btree_hdr *hdr);
 
 void
 btree_node_unget(cache *cc, const btree_config *cfg, btree_node *node);

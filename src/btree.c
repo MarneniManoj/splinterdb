@@ -174,7 +174,8 @@ btree_fill_index_entry(const btree_config *cfg,
                        index_entry        *entry,
                        slice               new_pivot_key,
                        uint64              new_addr,
-                       btree_pivot_stats   stats)
+                       btree_pivot_stats   stats,
+                       uint8               flush_seq)
 {
    debug_assert((void *)hdr <= (void *)entry);
    debug_assert(diff_ptr(hdr, entry) + index_entry_size(new_pivot_key)
@@ -184,6 +185,7 @@ btree_fill_index_entry(const btree_config *cfg,
    entry->key_indirect          = FALSE;
    entry->pivot_data.child_addr = new_addr;
    entry->pivot_data.stats      = stats;
+   entry->pivot_data.flush_sequence = flush_seq;
 }
 
 bool
@@ -218,7 +220,7 @@ btree_set_index_entry(const btree_config *cfg,
           * but new entry will fit inside it.
           */
          btree_fill_index_entry(
-            cfg, hdr, old_entry, new_pivot_key, new_addr, stats);
+            cfg, hdr, old_entry, new_pivot_key, new_addr, stats, btree_inc_tail_flush_generation(hdr));
          return TRUE;
       }
       /* Fall through */
@@ -232,7 +234,7 @@ btree_set_index_entry(const btree_config *cfg,
 
    index_entry *new_entry = pointer_byte_offset(
       hdr, hdr->next_entry - index_entry_size(new_pivot_key));
-   btree_fill_index_entry(cfg, hdr, new_entry, new_pivot_key, new_addr, stats);
+   btree_fill_index_entry(cfg, hdr, new_entry, new_pivot_key, new_addr, stats, btree_inc_tail_flush_generation(hdr));
 
    hdr->offsets[k]  = diff_ptr(hdr, new_entry);
    hdr->num_entries = new_num_entries;
@@ -1246,6 +1248,13 @@ btree_unblock_dec_ref(cache *cc, btree_config *cfg, uint64 root_addr)
    mini_unblock_dec_ref(cc, meta_head);
 }
 
+uint8
+btree_inc_tail_flush_generation(btree_hdr *hdr)
+{
+    platform_assert(hdr->tail_flush_sequence+1 <= UINT8_MAX);
+    return hdr->tail_flush_sequence++;
+}
+
 static inline message create_grow_root_message(uint64 child_address){
    char child_addr[20];
    sprintf(child_addr, "%lu", child_address);
@@ -2241,6 +2250,8 @@ btree_lookup_with_ref(cache        *cc,        // IN
       btree_node_unget(cc, cfg, node);
    }
 }
+
+
 
 platform_status
 btree_lookup(cache             *cc,        // IN
