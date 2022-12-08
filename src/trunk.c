@@ -9601,14 +9601,7 @@ perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_t
    }
 
 }
-void
-process_memtable_split_root(trunk_handle *pHandle,
-                            uint64        addr,
-                            message       message1,
-                            uint64        lsn)
-{
 
-}
 uint64
 parseInt(message msg)
 {
@@ -9617,6 +9610,39 @@ parseInt(message msg)
    sscanf( addr , "%lu" , &res);
    return res;
 }
+
+void
+process_memtable_split_root(trunk_handle *spl,
+                            uint64        addr,
+                            message       message1,
+                            uint64        log_entry_lsn)
+{
+   page_handle *page = trunk_node_get(spl, addr);
+   trunk_hdr *root = (trunk_hdr *)page->data;
+   if(root->page_lsn >= log_entry_lsn){
+      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
+      trunk_node_unget(spl, &page);
+      return ;
+   }
+   trunk_node_claim(spl, &page);
+   trunk_node_lock(spl, page);
+
+   uint64 child_addr = parseInt(message1);
+   page_handle *child = trunk_node_get(spl, child_addr);
+   trunk_node_claim(spl, &page);
+   trunk_node_lock(spl, page);
+
+   trunk_grow_root(spl, page, child);
+
+   trunk_node_unlock(spl, child);
+   trunk_node_unclaim(spl, child);
+   trunk_node_unget(spl, &child);
+
+   trunk_node_unlock(spl, page);
+   trunk_node_unclaim(spl, page);
+   trunk_node_unget(spl, &page);
+}
+
 
 void
 process_memtable_flush(trunk_handle *spl,
