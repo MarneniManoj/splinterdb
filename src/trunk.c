@@ -749,24 +749,6 @@ void                               trunk_btree_skiperator_deinit   (trunk_handle
 bool                               trunk_verify_node               (trunk_handle *spl, page_handle *node);
 void                               trunk_maybe_reclaim_space       (trunk_handle *spl);
 void                                trunk_adjust_flush_sequence      (trunk_handle *spl, page_handle *node);
-void
-                          process_memtable_incorp(trunk_handle *pHandle,
-                                                  uint64        addr,
-                                                  message       message1,
-                                                  uint64        i);
-void
-                          process_memtable_flush(trunk_handle *pHandle,
-                                                 uint64        addr,
-                                                 message       message1,
-                                                 uint64        lsn);
-void
-                          process_memtable_split_root(trunk_handle *pHandle,
-                                                      uint64        addr,
-                                                      message       message1,
-                                                      uint64        lsn);
-
-
-
 const static iterator_ops trunk_btree_skiperator_ops = {
    .get_curr = trunk_btree_skiperator_get_curr,
    .at_end   = trunk_btree_skiperator_at_end,
@@ -9517,6 +9499,7 @@ trunk_get_scratch_size()
 
 void
 read_WAL_for_recovery(trunk_handle *spl){
+    printf("read_WAL_for_recovery");
     shard_log_iterator itor;
 //    uint64 addr  = log_addr(spl->log);
 
@@ -9532,24 +9515,17 @@ read_WAL_for_recovery(trunk_handle *spl){
     uint64 lsn;
     node_type nt;
 
-    trunk_super_block  *super = (trunk_super_block  *)spl->root_addr;
-
     platform_status rc = shard_log_iterator_init(spl->cc, slog->cfg, spl->heap_id, addr, magic, &itor);
     platform_assert_status_ok(rc);
 
     iterator_at_end(itorh, &at_end);
     for (; !at_end; ) {
         shard_log_iterator_get_curr_WAL(itorh, &returned_key, &returned_message, &page_addr, &generation, &lsn, &nt);
-
-        if(lsn > super->master_lsn ){
-           platform_default_log("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu node type: %d\n", returned_message.type, (char *)returned_key.data,
-                                (char *)returned_message.data.data, page_addr,
-                                generation, lsn, nt);
-
-           perform_WAL_entry_operation(spl, returned_key, returned_message, returned_message.type, page_addr,
-                                       generation, lsn, nt);
-        }
-
+        printf("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu node type: %d\n", returned_message.type, (char *)returned_key.data,
+               (char *)returned_message.data.data, page_addr,
+               generation, lsn, nt);
+        perform_WAL_entry_operation(spl, returned_key, returned_message, returned_message.type, page_addr,
+                                    generation, lsn, nt);
         iterator_advance(itorh);
         iterator_at_end(itorh, &at_end);
     }
@@ -9577,119 +9553,10 @@ perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_t
                                              spl->mt_ctxt,
                                              mt,
                                              spl->heap_id);
-   }else if(nt == NODE_TYPE_TRUNK){
-      switch (msg_type) {
-         case MESSAGE_TYPE_MEM_INCORP:
-            process_memtable_incorp(spl, page_addr, msg, lsn);
-            break ;
-         case MESSAGE_TYPE_FLUSH:
-            process_memtable_flush(spl, page_addr, msg, lsn);
-            break ;
-         case MESSAGE_TYPE_SPLIT_ROOT:
-            process_memtable_split_root(spl, page_addr, msg, lsn);
-            break ;
-         case MESSAGE_TYPE_SPLIT_INDEX:
-            break ;
-         case MESSAGE_TYPE_SPLIT_LEAF:
-            break ;
-
-         default:
-            platform_default_log("Invalid Message type");
-      }
+   } else {
+       // trunk functions
    }
 
 }
-void
-process_memtable_split_root(trunk_handle *pHandle,
-                            uint64        addr,
-                            message       message1,
-                            uint64        lsn)
-{
-
-}
-uint64
-parseInt(message msg)
-{
-   char *addr = (char *)message_data(msg);
-   uint64 res = 0;
-   sscanf( addr , "%lu" , &res);
-   return res;
-}
-
-void
-process_memtable_flush(trunk_handle *spl,
-                       uint64        addr,
-                       message       message1,
-                       uint64        log_entry_lsn)
-{
-   page_handle *page = trunk_node_get(spl, addr);
-   trunk_hdr *root = (trunk_hdr *)page->data;
-   if(root->page_lsn >= log_entry_lsn){
-      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
-      trunk_node_unget(spl, &page);
-      return ;
-   }
-   trunk_pivot_data *pdata ;
-   uint64 child_addr = parseInt(message1);
-
-   //Find pivot with address
-   for (uint16 pivot_no = 0; pivot_no < trunk_num_pivot_keys(spl, page) - 1;
-        pivot_no++)
-   {
-      pdata = trunk_get_pivot_data(spl, page, pivot_no);
-      if (pdata->addr == child_addr) {
-         break ;
-      }
-   }
-   platform_assert(pdata->addr == child_addr);
 
 
-   //Aquiring locks to process the flush
-   trunk_node_claim(spl, &page);
-   trunk_node_lock(spl, page);
-
-   // flush the branch references into a new bundle in the child
-   trunk_compact_bundle_req *req = TYPED_ZALLOC(spl->heap_id, req);
-   page_handle *child = trunk_node_get(spl, pdata->addr);
-
-   trunk_node_claim(spl, &child);
-   trunk_node_lock(spl, child);
-
-   trunk_flush_parent_to_child(spl, page, pdata, child, req);
-
-   trunk_default_log_if_enabled(
-      spl, "enqueuing compact_bundle %lu-%u\n", req->addr, req->bundle_no);
-   platform_status rc =
-      task_enqueue(spl->ts, TASK_TYPE_NORMAL, trunk_compact_bundle, req, FALSE);
-
-   platform_assert_status_ok(rc);
-
-   trunk_node_unlock(spl, child);
-   trunk_node_unclaim(spl, child);
-   trunk_node_unget(spl, &child);
-
-   trunk_node_unlock(spl, page);
-   trunk_node_unclaim(spl, page);
-   trunk_node_unget(spl, &page);
-
-}
-
-
-void
-process_memtable_incorp(trunk_handle *spl,
-                        uint64        addr,
-                        message       msg,
-                        uint64        log_entry_lsn)
-{
-//   page_handle *page = trunk_node_get(spl, addr);
-//   trunk_hdr *root = (trunk_hdr *)page->data;
-//   if(root->page_lsn >= log_entry_lsn){
-//      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
-//      trunk_node_unget(spl, &page);
-//      return ;
-//   }
-//   //Only 1 memtable would be
-//   trunk_memtable_incorp(spl, 0, )
-
-
-}

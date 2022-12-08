@@ -523,7 +523,6 @@ splinterdb_create_or_open(const splinterdb_config *kvs_cfg,      // IN
       status = STATUS_INVALID_STATE;
       goto deinit_cache;
    }
-   splinterdb_recover(kvs);
 
    *kvs_out = kvs;
    return platform_status_to_int(status);
