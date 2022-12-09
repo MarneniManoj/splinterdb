@@ -16,3 +16,17 @@ SplinterDB is *provided as-is* and is not recommended for use in production unti
 See [Build](docs/build.md) for instructions on building SplinterDB from source.
 
 See [Documentation](docs/README.md) for preliminary documentation.
+
+Build Commands:
+
+export COMPILER=gcc 
+export CC=$COMPILER
+export LD=$COMPILER
+make clean 
+make 
+
+Test Commands:
+make run-tests
+INCLUDE_SLOW_TESTS=true make run-tests
+
+
