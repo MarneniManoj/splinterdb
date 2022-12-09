@@ -13,6 +13,7 @@
 #include "mini_allocator.h"
 #include "iterator.h"
 #include "util.h"
+#define MAX_BRANCHES (100000)
 
 /*
  * Max height of the BTree. This is somewhat of an arbitrary limit to size

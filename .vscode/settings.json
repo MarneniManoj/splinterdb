@@ -2,6 +2,8 @@
     "files.associations": {
         "allocator.h": "c",
         "limits.h": "c",
-        "shard_log.h": "c"
+        "shard_log.h": "c",
+        "user_config.h": "c",
+        "splinter_test.h": "c"
     }
 }
