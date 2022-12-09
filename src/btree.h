@@ -14,6 +14,7 @@
 #include "iterator.h"
 #include "util.h"
 #define MAX_BRANCHES (100000)
+#include "shard_log.h"
 
 /*
  * Max height of the BTree. This is somewhat of an arbitrary limit to size
@@ -217,8 +218,9 @@ btree_insert(cache              *cc,         // IN
              slice               key,        // IN
              message             data,       // IN
              uint64             *generation, // OUT
-             bool               *was_unique);              // OUT
-
+             bool               *was_unique, // OUT
+             log_handle         *log,        // IN
+             bool               use_log);
 /*
  *-----------------------------------------------------------------------------
  * btree_ctxt_init --
@@ -467,4 +469,16 @@ btree_message_to_string(btree_config *cfg, message data, char str[static 128])
    return data_message_to_string(cfg->data_cfg, data, str, 128);
 }
 
+platform_status
+perform_brtee_WAL_entry_operation(cache              *cc,         // IN
+                                  const btree_config *cfg,        // IN
+                                  platform_heap_id    heap_id,    // IN
+                                  btree_scratch      *scratch,
+                                  mini_allocator     *mini,
+                                  slice key,
+                                  message msg,
+                                  message_type msg_type,
+                                  uint64 page_addr,
+                                  uint64 generation,
+                                  uint64 lsn);
 #endif // __BTREE_H__

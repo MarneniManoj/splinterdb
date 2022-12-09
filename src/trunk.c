@@ -737,6 +737,24 @@ void                               trunk_btree_skiperator_deinit   (trunk_handle
 bool                               trunk_verify_node               (trunk_handle *spl, page_handle *node);
 void                               trunk_maybe_reclaim_space       (trunk_handle *spl);
 void                                trunk_adjust_flush_sequence      (trunk_handle *spl, page_handle *node);
+void
+                          process_memtable_incorp(trunk_handle *pHandle,
+                                                  uint64        addr,
+                                                  message       message1,
+                                                  uint64        i);
+void
+                          process_memtable_flush(trunk_handle *pHandle,
+                                                 uint64        addr,
+                                                 message       message1,
+                                                 uint64        lsn);
+void
+                          process_memtable_split_root(trunk_handle *pHandle,
+                                                      uint64        addr,
+                                                      message       message1,
+                                                      uint64        lsn);
+
+
+
 const static iterator_ops trunk_btree_skiperator_ops = {
    .get_curr = trunk_btree_skiperator_get_curr,
    .at_end   = trunk_btree_skiperator_at_end,
@@ -1286,6 +1304,7 @@ trunk_inc_tail_flush_generation(trunk_handle *spl, page_handle *node)
 uint64
 trunk_pivot_size(trunk_handle *spl)
 {
+   //printf("Hello world...%lu\t%lu\n",trunk_key_size(spl),sizeof(trunk_pivot_data));
    return trunk_key_size(spl) + sizeof(trunk_pivot_data);
 }
 
@@ -3191,23 +3210,29 @@ trunk_memtable_insert(trunk_handle *spl, char *key, message msg)
 
    // this call is safe because we hold the insert lock
    memtable *mt = trunk_get_memtable(spl, generation);
+
    if(previous_gen != generation && spl->cfg.use_log){
       wal_log_trunk_changes(spl, spl->root_addr, TRUE, mt->root_addr);
    }
 //   trunk_super_block_update_mtaddr(spl, mt->root_addr);
+
    uint64    leaf_generation; // used for ordering the log
    rc = memtable_insert(
-      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation);
+      spl->mt_ctxt, mt, spl->heap_id, key, msg, &leaf_generation, spl->log, spl->cfg.use_log);
+//   printf("Memtable after insertion");
+//   memtable_print(stdout, spl->cc, mt);
    if (!SUCCESS(rc)) {
       goto unlock_insert_lock;
    }
 
    if (spl->cfg.use_log) {
-//      slice key_slice = slice_create(trunk_key_size(spl), key);
-//      int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
-//      if (crappy_rc != 0) {
-//         goto unlock_insert_lock;
-//      }
+//      shard_log *log = (shard_log *)spl->log;
+//      shard_log_print(log);
+      // slice key_slice = slice_create(trunk_key_size(spl), key);
+      // int   crappy_rc = log_write(spl->log, key_slice, msg, leaf_generation);
+      // if (crappy_rc != 0) {
+      //    goto unlock_insert_lock;
+      // }
    }
 
 unlock_insert_lock:
@@ -6040,6 +6065,17 @@ trunk_range_iterator_advance(iterator *itor);
 void
 trunk_range_iterator_deinit(trunk_range_iterator *range_itor);
 
+void
+                          process_memtable_split_index(trunk_handle *spl,
+                                                       uint64        addr,
+                                                       message       msg,
+                                                       uint64        lsn);
+void
+parseAddr(message message1, uint64 *left_addr, uint64 *right_addr);
+void
+                          unlockclaimget(trunk_handle *spl, page_handle **page);
+page_handle                           *
+claim_and_lock(trunk_handle *spl, page_handle **page);
 const static iterator_ops trunk_range_iterator_ops = {
    .get_curr = trunk_range_iterator_get_curr,
    .at_end   = trunk_range_iterator_at_end,
@@ -9343,7 +9379,7 @@ trunk_config_init(trunk_config        *trunk_cfg,
    trunk_cfg->fanout                  = fanout;
    trunk_cfg->max_branches_per_node   = max_branches_per_node;
    trunk_cfg->reclaim_threshold       = reclaim_threshold;
-   trunk_cfg->use_log                 = use_log;
+   trunk_cfg->use_log                 = TRUE;
    trunk_cfg->use_stats               = use_stats;
    trunk_cfg->verbose_logging_enabled = verbose_logging;
    trunk_cfg->log_handle              = log_handle;
@@ -9480,4 +9516,274 @@ size_t
 trunk_get_scratch_size()
 {
    return sizeof(trunk_task_scratch);
+}
+
+void
+read_WAL_for_recovery(trunk_handle *spl){
+    shard_log_iterator itor;
+//    uint64 addr  = log_addr(spl->log);
+
+    shard_log *slog = (shard_log *)spl->log;
+    uint64 addr = slog->addr;
+    uint64 magic = slog->magic;
+    iterator *itorh = (iterator *)&itor;
+    bool at_end;
+    slice              returned_key;
+    message            returned_message;
+    uint64 page_addr;
+    uint64 generation;
+    uint64 lsn;
+    uint64 master_lsn;
+    node_type nt;
+
+    page_handle  *spage = trunk_node_get(spl, spl->root_addr);
+    trunk_super_block  *super = (trunk_super_block *)spage->data;
+    master_lsn = super->master_lsn;
+    trunk_node_unget(spl, &spage);
+
+    platform_status rc = shard_log_iterator_init(spl->cc, slog->cfg, spl->heap_id, addr, magic, &itor);
+    platform_assert_status_ok(rc);
+
+    iterator_at_end(itorh, &at_end);
+    for (; !at_end; ) {
+        shard_log_iterator_get_curr_WAL(itorh, &returned_key, &returned_message, &page_addr, &generation, &lsn, &nt);
+
+        if(lsn > master_lsn ){
+           platform_default_log("\nRECOVER log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu node type: %d\n", returned_message.type, (char *)returned_key.data,
+                                (char *)returned_message.data.data, page_addr,
+                                generation, lsn, nt);
+
+           perform_WAL_entry_operation(spl, returned_key, returned_message, returned_message.type, page_addr,
+                                       generation, lsn, nt);
+        }
+
+        iterator_advance(itorh);
+        iterator_at_end(itorh, &at_end);
+    }
+}
+
+void
+perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_type msg_type, uint64 page_addr, uint64 generation,
+                            uint64 lsn, node_type nt){
+   if (nt == NODE_TYPE_BTREE){
+       page_handle    *lock_page;
+       uint64          gen;
+       memtable_maybe_rotate_and_get_insert_lock(
+               spl->mt_ctxt, &gen, &lock_page);
+
+       // this call is safe because we hold the insert lock
+       memtable *mt = trunk_get_memtable(spl, gen);
+       perform_memtable_WAL_entry_operation(key,
+                                             msg,
+                                             msg_type,
+                                             page_addr,
+                                             generation,
+                                             lsn,
+                                             spl->mt_ctxt,
+                                             mt,
+                                             spl->heap_id);
+   }else if(nt == NODE_TYPE_TRUNK){
+      switch (msg_type) {
+         case MESSAGE_TYPE_MEM_INCORP:
+            process_memtable_incorp(spl, page_addr, msg, lsn);
+            break ;
+         case MESSAGE_TYPE_FLUSH:
+            process_memtable_flush(spl, page_addr, msg, lsn);
+            break ;
+         case MESSAGE_TYPE_SPLIT_ROOT:
+            process_memtable_split_root(spl, page_addr, msg, lsn);
+            break ;
+         case MESSAGE_TYPE_SPLIT_INDEX:
+            process_memtable_split_index(spl, page_addr, msg, lsn);
+            break ;
+         case MESSAGE_TYPE_SPLIT_LEAF:
+            break ;
+
+         default:
+            platform_default_log("Invalid Message type");
+      }
+   }
+
+}
+void
+process_memtable_split_index(trunk_handle *spl,
+                             uint64        addr,
+                             message       msg,
+                             uint64        log_entry_lsn)
+{
+   page_handle *page = trunk_node_get(spl, addr);
+   trunk_hdr *root = (trunk_hdr *)page->data;
+   if(root->page_lsn >= log_entry_lsn){
+      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
+      trunk_node_unget(spl, &page);
+      return ;
+   }
+   trunk_node_claim(spl, &page);
+   trunk_node_lock(spl, page);
+
+   uint64 *left_addr;
+   uint64 *right_addr;
+   parseAddr(msg, left_addr, right_addr);
+
+   page_handle *left_node = trunk_node_get(spl, *left_addr);
+   page_handle *right_node = trunk_node_get(spl, *right_addr);
+   uint16       target_num_children = trunk_num_children(spl, left_node) / 2;
+   trunk_pivot_data *pdata ;
+   //Find pivot with address
+   uint16 pivot_no = 0;
+   for (; pivot_no < trunk_num_pivot_keys(spl, page) - 1;
+        pivot_no++)
+   {
+      pdata = trunk_get_pivot_data(spl, page, pivot_no);
+      if (pdata->addr == *left_addr) {
+         break ;
+      }
+   }
+   platform_assert(pdata->addr == *left_addr);
+   platform_assert(pivot_no != trunk_num_pivot_keys(spl, page) - 1);
+
+   left_node = claim_and_lock(spl, &left_node);
+   right_node = claim_and_lock(spl, &right_node);
+
+   trunk_split_index_given_rightnode(spl, page, pivot_no, left_node, target_num_children, right_node);
+
+
+   unlockclaimget(spl, &right_node);
+   unlockclaimget(spl, &left_node);
+   unlockclaimget(spl, &page);
+
+}
+void
+parseAddr(message msg, uint64 *left_addr, uint64 *right_addr)
+{
+   char *addr = (char *)message_data(msg);
+   sscanf( addr , "%lu %lu" , left_addr, right_addr);
+}
+
+uint64
+parseInt(message msg)
+{
+   char *addr = (char *)message_data(msg);
+   uint64 res = 0;
+   sscanf( addr , "%lu" , &res);
+   return res;
+}
+
+void
+process_memtable_split_root(trunk_handle *spl,
+                            uint64        addr,
+                            message       message1,
+                            uint64        log_entry_lsn)
+{
+   page_handle *page = trunk_node_get(spl, addr);
+   trunk_hdr *root = (trunk_hdr *)page->data;
+   if(root->page_lsn >= log_entry_lsn){
+      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
+      trunk_node_unget(spl, &page);
+      return ;
+   }
+   page = claim_and_lock(spl, &page);
+
+   uint64 child_addr = parseInt(message1);
+   page_handle *child = trunk_node_get(spl, child_addr);
+   trunk_node_claim(spl, &page);
+   trunk_node_lock(spl, page);
+
+   trunk_grow_root(spl, page, child);
+
+   unlockclaimget(spl, &child);
+   unlockclaimget(spl, &page);
+}
+page_handle *
+claim_and_lock(trunk_handle *spl, page_handle **page)
+{
+   trunk_node_claim(spl, page);
+   trunk_node_lock(spl, (*page));
+   return (*page);
+}
+void
+unlockclaimget(trunk_handle *spl, page_handle **page)
+{
+   trunk_node_unlock(spl, (*page));
+   trunk_node_unclaim(spl, (*page));
+   trunk_node_unget(spl, page);
+}
+
+
+void
+process_memtable_flush(trunk_handle *spl,
+                       uint64        addr,
+                       message       message1,
+                       uint64        log_entry_lsn)
+{
+   page_handle *page = trunk_node_get(spl, addr);
+   trunk_hdr *root = (trunk_hdr *)page->data;
+   if(root->page_lsn >= log_entry_lsn){
+      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
+      trunk_node_unget(spl, &page);
+      return ;
+   }
+   trunk_pivot_data *pdata ;
+   uint64 child_addr = parseInt(message1);
+
+   //Find pivot with address
+   for (uint16 pivot_no = 0; pivot_no < trunk_num_pivot_keys(spl, page) - 1;
+        pivot_no++)
+   {
+      pdata = trunk_get_pivot_data(spl, page, pivot_no);
+      if (pdata->addr == child_addr) {
+         break ;
+      }
+   }
+   platform_assert(pdata->addr == child_addr);
+
+
+   //Aquiring locks to process the flush
+   trunk_node_claim(spl, &page);
+   trunk_node_lock(spl, page);
+
+   // flush the branch references into a new bundle in the child
+   trunk_compact_bundle_req *req = TYPED_ZALLOC(spl->heap_id, req);
+   page_handle *child = trunk_node_get(spl, pdata->addr);
+
+   trunk_node_claim(spl, &child);
+   trunk_node_lock(spl, child);
+
+   trunk_flush_parent_to_child(spl, page, pdata, child, req);
+
+   trunk_default_log_if_enabled(
+      spl, "enqueuing compact_bundle %lu-%u\n", req->addr, req->bundle_no);
+   platform_status rc =
+      task_enqueue(spl->ts, TASK_TYPE_NORMAL, trunk_compact_bundle, req, FALSE);
+
+   platform_assert_status_ok(rc);
+
+   trunk_node_unlock(spl, child);
+   trunk_node_unclaim(spl, child);
+   trunk_node_unget(spl, &child);
+
+   trunk_node_unlock(spl, page);
+   trunk_node_unclaim(spl, page);
+   trunk_node_unget(spl, &page);
+
+}
+
+
+void
+process_memtable_incorp(trunk_handle *spl,
+                        uint64        addr,
+                        message       msg,
+                        uint64        log_entry_lsn)
+{
+//   page_handle *page = trunk_node_get(spl, addr);
+//   trunk_hdr *root = (trunk_hdr *)page->data;
+//   if(root->page_lsn >= log_entry_lsn){
+//      //This Log is already applied to the page hence the lsn on page is greater or equal so skipping to apply again.
+//      trunk_node_unget(spl, &page);
+//      return ;
+//   }
+//   //Only 1 memtable would be
+//   trunk_memtable_incorp(spl, 0, )
+
+
 }

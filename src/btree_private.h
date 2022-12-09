@@ -40,6 +40,7 @@ struct ONDISK btree_hdr {
    uint64      next_extent_addr;
    uint64      generation;
    uint8       height;
+   uint64      page_lsn;  // Log Sequence Number(LSN) corresponding to the newest update on the page
    node_offset next_entry;
    table_index num_entries;
    table_entry offsets[];

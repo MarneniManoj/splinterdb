@@ -118,7 +118,9 @@ memtable_insert(memtable_context *ctxt,
                 platform_heap_id  heap_id,
                 const char       *key,
                 message           msg,
-                uint64           *leaf_generation)
+                uint64           *leaf_generation,
+                log_handle       *log,
+                bool             use_log)
 {
    const threadid tid = platform_get_tid();
    bool           was_unique;
@@ -133,7 +135,9 @@ memtable_insert(memtable_context *ctxt,
                                      key_slice,
                                      msg,
                                      leaf_generation,
-                                     &was_unique);
+                                     &was_unique,
+                                     log,
+                                     use_log);
    if (!SUCCESS(rc)) {
       return rc;
    }
@@ -347,4 +351,32 @@ memtable_config_init(memtable_config *cfg,
    cfg->max_extents_per_memtable =
       MEMTABLE_SPACE_OVERHEAD_FACTOR * memtable_capacity
       / cache_config_extent_size(btree_cfg->cache_cfg);
+}
+
+void
+perform_memtable_WAL_entry_operation(slice key,
+                                      message msg,
+                                      message_type msg_type,
+                                      uint64 page_addr,
+                                      uint64 generation,
+                                      uint64 lsn,
+                                      memtable_context *ctxt,
+                                      memtable *mt,
+                                      platform_heap_id hid){
+    const threadid tid = platform_get_tid();
+
+    perform_brtee_WAL_entry_operation(ctxt->cc,
+                                      ctxt->cfg.btree_cfg,
+                                      hid,
+                                      &ctxt->scratch[tid],
+                                      &mt->mini,
+                                      key,
+                                      msg,
+                                      msg_type,
+                                      page_addr,
+                                      generation,
+                                      lsn);
+
+
+
 }

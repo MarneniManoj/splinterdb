@@ -20,7 +20,7 @@
  */
 
 // Insecure or difficult to use string functions
-#pragma GCC poison strlen
+//#pragma GCC poison strlen
 #pragma GCC poison strncpy
 
 /* String parsing functions we don't want to use */
@@ -51,7 +51,7 @@
 #pragma GCC poison fprintf
 #pragma GCC poison fputs
 
-#pragma GCC poison printf
+//#pragma GCC poison printf
 //#pragma GCC poison FILE
 
 #pragma GCC poison pthread_t

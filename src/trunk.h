@@ -557,12 +557,10 @@ trunk_config_init(trunk_config        *trunk_cfg,
 size_t
 trunk_get_scratch_size();
 
-// static void trunk_print_pivots(platform_log_handle *log_handle,
-//                    trunk_handle        *spl,
-//                    page_handle         *node)
+void
+read_WAL_for_recovery(trunk_handle *spl);
 
-// void print1(trunk_hdr* trunk){
-//    printf("Hello World\n");
-// }
-
+void
+perform_WAL_entry_operation(trunk_handle *spl, slice key, message msg, message_type msg_type, uint64 page_addr, uint64 generation,
+                            uint64 lsn, node_type nt);
 #endif // __TRUNK_H

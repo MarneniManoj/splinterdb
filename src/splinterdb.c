@@ -524,6 +524,10 @@ splinterdb_create_or_open(const splinterdb_config *kvs_cfg,      // IN
       goto deinit_cache;
    }
 
+   if (open_existing && kvs->spl->cfg.use_log) {
+      splinterdb_recover(kvs);
+   }
+
    *kvs_out = kvs;
    return platform_status_to_int(status);
 
@@ -761,6 +765,10 @@ splinterdb_update(const splinterdb *kvsb, slice key, slice update)
    return splinterdb_insert_message(kvsb, key, msg);
 }
 
+void
+splinterdb_recover(const splinterdb *kvs){
+   read_WAL_for_recovery(kvs->spl);
+}
 /*
  *-----------------------------------------------------------------------------
  * _splinterdb_lookup_result structure --
@@ -989,3 +997,4 @@ splinterdb_stats_reset(splinterdb *kvs)
 {
    trunk_reset_stats(kvs->spl);
 }
+

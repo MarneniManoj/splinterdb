@@ -21,7 +21,7 @@
 #include "trunk.h"
 #include "btree.h"
 #include "btree_private.h"
-#define USER_MAX_KEY_SIZE 80
+#define KEY_SIZE 24
 //#include "poison.h"
 
 /*
@@ -1334,7 +1334,7 @@ clockcache_write_callback(void           *metadata,
 
 
 uint64 trunk_key_size_(){
-   return USER_MAX_KEY_SIZE;
+   return KEY_SIZE;
 }
 
 static inline char *
@@ -1356,16 +1356,18 @@ trunk_get_pivot_data_(page_handle *node, uint16 pivot_no)
 }
 
 bool isunmapped(clockcache *cc,uint64 addr){
-   if(addr%cc->cfg->log_page_size!=0) 
-      return 1;
+   // if(addr%cc->cfg->log_page_size!=0) {
+   //    printf("%lu invalid addr\n",addr);   
+   //    return 1;
+   // }
+     
 
    return (addr == CC_UNMAPPED_ADDR || clockcache_lookup(cc,addr)==CC_UNMAPPED_ENTRY);
 }
 
 bool Isdirty(clockcache *cc,uint64 addr){
-   if(!isunmapped(cc,addr))
-      return 0;
-   printf("Checking Dirty for address : %lu \n",addr);                           
+   if(isunmapped(cc,addr))
+      return 0;                        
    uint64 entry_no = clockcache_lookup(cc, addr);
    return (!clockcache_test_flag(cc, entry_no, CC_CLEAN)
           && !clockcache_test_flag(cc, entry_no, CC_FREE));
@@ -1373,14 +1375,12 @@ bool Isdirty(clockcache *cc,uint64 addr){
 
 uint64 getTparent(clockcache *cc,uint64 addr){
    uint64 paddr=addr;
-   printf("initial : %lu ---> %lu, now getting parent ... \n",paddr,addr);
-   while(addr && !isunmapped(cc,addr) && Isdirty(cc, addr)){
+   while(addr && Isdirty(cc, addr)){
       page_handle* node= cache_get(&cc->super,addr,FALSE,PAGE_TYPE_TRUNK);
       trunk_hdr* hdr = (trunk_hdr *)node->data;
       paddr=addr;
       addr=hdr->parent_addr;
       cache_unget(&cc->super,node);
-      printf("ADS : %lu ---> %lu \n",paddr,addr);
    }
    return paddr;
 }
@@ -1389,8 +1389,6 @@ void getalldirty(clockcache *cc,uint64 addr,uint64* dirty, uint32 *count){
 
    if(!Isdirty(cc,addr))
       return;
-
-   printf("%lu :ISDIRTY\n",addr);
    
    page_handle* node= cache_get(&cc->super,addr,FALSE,PAGE_TYPE_TRUNK);
    trunk_hdr* hdr = (trunk_hdr *)node->data;
@@ -1403,16 +1401,23 @@ void getalldirty(clockcache *cc,uint64 addr,uint64* dirty, uint32 *count){
    }
    //Doing inorder here if no height;
    if (hdr->height != 0) {
-      printf("num_children %u\n",num_children);
+      printf("------------------------------------------------------------\n");
+      printf("num_children :%u \t height of node: %u\n",num_children,hdr->height);
+      printf("parent address : %lu\n",addr);
       for (uint32 i = 0; i < num_children; i++) {
          trunk_pivot_data *data = trunk_get_pivot_data_(node, i);
-         printf("child %u : %lu \t",i,data->addr);
+         printf("(child %u : %lu :%lu :%lu :: hdr->persisted_flush_sequence : %hu :: data->flush_sequence:%hu  ) \n",i,data->addr,getTparent(cc,data->addr),addr,hdr->persisted_flush_sequence,data->flush_sequence);
+         }
+      printf("\n------------------------------------------------------------\n");
+      for (uint32 i = 0; i < num_children; i++) {
+         trunk_pivot_data *data = trunk_get_pivot_data_(node, i);
+         printf("hdr->persisted_flush_sequence : %hu :: data->flush_sequence:%hu) \n",hdr->persisted_flush_sequence,data->flush_sequence);
          if(data->flush_sequence<hdr->persisted_flush_sequence){
             getalldirty(cc,data->addr,dirty,count);
          }
          printf("GET_PIVOT_DATA %u   %lu\n",*count, addr);
          dirty[(*count)++]=addr;
-         if(data->flush_sequence>=hdr->persisted_flush_sequence){
+         if(data->flush_sequence>hdr->persisted_flush_sequence){
             getalldirty(cc,data->addr,dirty,count);
          }
       }
@@ -1454,14 +1459,14 @@ void cleanSinglePage(clockcache *cc, uint64 addr){
    status = io_write_async(
       cc->io, req, clockcache_write_callback, req_count, first_addr);
    platform_assert_status_ok(status);
-   printf("IO requirement DONE for %lu\n\n",addr);
+   //printf("IO requirement DONE for %lu\n\n",addr);
 }
 
 void flushinorder(clockcache *cc,uint64 *dirty, uint32 *counter){
    for(int i=(*counter)-1;i>=0;i--){
-         printf("iter : %u %d \n",i,*counter);
+         //printf("iter : %u %d \n",i,*counter);
          uint64 addr=dirty[i];
-         printf("flushaddr:\t%lu\n\n",addr);
+         //printf("flushaddr:\t%lu\n\n",addr);
          page_handle* node= cache_get(&cc->super,addr,FALSE,PAGE_TYPE_TRUNK);
          cleanSinglePage(cc,dirty[i]);
          cache_unget(&cc->super,node);
@@ -1482,6 +1487,8 @@ void flushinorder(clockcache *cc,uint64 *dirty, uint32 *counter){
       return node;
    }
 
+
+   //added in case Btree flush sequence numbers are added in header and pivot.  
    void getallBdirty(clockcache *cc,uint64 addr,uint64* dirty, uint32 *count){
 
       if(!Isdirty(cc,addr))
@@ -1498,7 +1505,7 @@ void flushinorder(clockcache *cc,uint64 *dirty, uint32 *counter){
       }
 
       if(height){
-         printf("num_entries %u\n",num_entries);
+         printf("num_entries : %u \t height of node : %u \n",num_entries,height);
          for (uint32 i = 0; i < num_entries; i++) {
             index_entry *entry =(index_entry *)const_pointer_byte_offset(node.hdr, node.hdr->offsets[i]);
             printf("child %u : %lu \t",i,entry->pivot_data.child_addr);
@@ -1565,9 +1572,6 @@ clockcache_batch_start_writeback(clockcache *cc, uint64 batch, bool is_urgent)
           && clockcache_try_set_writeback(cc, entry_no, is_urgent))
       {
          if(entry->type == PAGE_TYPE_TRUNK && Isdirty(cc,addr)){
-            if(addr>=10000000){
-               printf("maybe invalid node %lu, %u, %u\n",addr,entry_no,cc->cfg->page_capacity);
-            }
             addr= getTparent(cc,addr);
             uint64 dirty[MAX_TRUNKS];
             memset(dirty, 0, MAX_TRUNKS*sizeof(dirty[0]));
@@ -1577,17 +1581,17 @@ clockcache_batch_start_writeback(clockcache *cc, uint64 batch, bool is_urgent)
             flushinorder(cc,dirty,&counter);
          }
 
-         if(entry->type == PAGE_TYPE_BRANCH && Isdirty(cc,addr)){
-            btree_node node;
-            getnode(cc,addr,&node);
-            printf("BTREE NODE ADDR %lu\n",node.addr);
-            //addr= getBparent(cc,addr);
-            uint64 bdirty[MAX_BRANCHES];
-            memset(bdirty, 0, MAX_TRUNKS*sizeof(bdirty[0]));
-            uint32 bcounter=0;
-            getallBdirty(cc,addr,bdirty,&bcounter);
-            flushinorder(cc,bdirty,&bcounter);
-         }
+         // if(entry->type == PAGE_TYPE_BRANCH && Isdirty(cc,addr)){
+         //    btree_node node;
+         //    getnode(cc,addr,&node);
+         //    printf("BTREE NODE ADDR %lu\n",node.addr);
+         //    //addr= getBparent(cc,addr);
+         //    uint64 bdirty[MAX_BRANCHES];
+         //    memset(bdirty, 0, MAX_TRUNKS*sizeof(bdirty[0]));
+         //    uint32 bcounter=0;
+         //    getallBdirty(cc,addr,bdirty,&bcounter);
+         //    flushinorder(cc,bdirty,&bcounter);
+         // }
          debug_assert(clockcache_lookup(cc, addr) == entry_no);
          first_addr = entry->page.disk_addr;
          // walk backwards through extent to find first cleanable entry
