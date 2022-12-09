@@ -1411,16 +1411,20 @@ void getalldirty(clockcache *cc,uint64 addr,uint64* dirty, uint32 *count){
       printf("\n------------------------------------------------------------\n");
       for (uint32 i = 0; i < num_children; i++) {
          trunk_pivot_data *data = trunk_get_pivot_data_(node, i);
-         printf("hdr->persisted_flush_sequence : %hu :: data->flush_sequence:%hu) \n",hdr->persisted_flush_sequence,data->flush_sequence);
+         //printf("hdr->persisted_flush_sequence : %hu :: data->flush_sequence:%hu) \n",hdr->persisted_flush_sequence,data->flush_sequence);
          if(data->flush_sequence<hdr->persisted_flush_sequence){
             getalldirty(cc,data->addr,dirty,count);
          }
-         printf("GET_PIVOT_DATA %u   %lu\n",*count, addr);
-         dirty[(*count)++]=addr;
+      }
+      printf("GET_PIVOT_DATA %u   %lu\n",*count, addr);
+      dirty[(*count)++]=addr;
+      for (uint32 i = 0; i < num_children; i++) {
+         trunk_pivot_data *data = trunk_get_pivot_data_(node, i);
+         //printf("hdr->persisted_flush_sequence : %hu :: data->flush_sequence:%hu) \n",hdr->persisted_flush_sequence,data->flush_sequence);
          if(data->flush_sequence>hdr->persisted_flush_sequence){
             getalldirty(cc,data->addr,dirty,count);
          }
-      }
+      }   
    }
    cache_unget(&cc->super,node);
 }
@@ -1489,38 +1493,38 @@ void flushinorder(clockcache *cc,uint64 *dirty, uint32 *counter){
 
 
    //added in case Btree flush sequence numbers are added in header and pivot.  
-   void getallBdirty(clockcache *cc,uint64 addr,uint64* dirty, uint32 *count){
+//    void getallBdirty(clockcache *cc,uint64 addr,uint64* dirty, uint32 *count){
 
-      if(!Isdirty(cc,addr))
-         return;
+//       if(!Isdirty(cc,addr))
+//          return;
 
-      btree_node node;
-      getnode(cc,addr,&node);
+//       btree_node node;
+//       getnode(cc,addr,&node);
 
-      uint32 num_entries = node.hdr->num_entries;
-      uint32 height = node.hdr->height;
+//       uint32 num_entries = node.hdr->num_entries;
+//       uint32 height = node.hdr->height;
 
-      if(!height){
-         dirty[(*count)++]=addr;
-      }
+//       if(!height){
+//          dirty[(*count)++]=addr;
+//       }
 
-      if(height){
-         printf("num_entries : %u \t height of node : %u \n",num_entries,height);
-         for (uint32 i = 0; i < num_entries; i++) {
-            index_entry *entry =(index_entry *)const_pointer_byte_offset(node.hdr, node.hdr->offsets[i]);
-            printf("child %u : %lu \t",i,entry->pivot_data.child_addr);
-            // if(entry->flush_sequence<node.hdr->persisted_flush_sequence){
-            //    getallBdirty(cc,entry->pivot_data.child_addr,dirty,count);
-            // }
-            printf("GET_PIVOT_DATA %u   %lu\n",*count, addr);
-            dirty[(*count)++]=addr;
-            // if(entry->flush_sequence>=node.hdr->persisted_flush_sequence){
-            //    getallBdirty(cc,entry->pivot_data.child_addr,dirty,count);
-            // }
-         }
-      }
-   cache_unget(&cc->super,node.page);
-}
+//       if(height){
+//          printf("num_entries : %u \t height of node : %u \n",num_entries,height);
+//          for (uint32 i = 0; i < num_entries; i++) {
+//             index_entry *entry =(index_entry *)const_pointer_byte_offset(node.hdr, node.hdr->offsets[i]);
+//             printf("child %u : %lu \t",i,entry->pivot_data.child_addr);
+//             if(entry->flush_sequence<node.hdr->persisted_flush_sequence){
+//                getallBdirty(cc,entry->pivot_data.child_addr,dirty,count);
+//             }
+//             printf("GET_PIVOT_DATA %u   %lu\n",*count, addr);
+//             dirty[(*count)++]=addr;
+//             if(entry->flush_sequence>=node.hdr->persisted_flush_sequence){
+//                getallBdirty(cc,entry->pivot_data.child_addr,dirty,count);
+//             }
+//          }
+//       }
+//    cache_unget(&cc->super,node.page);
+// }
 
 /*
  *----------------------------------------------------------------------
