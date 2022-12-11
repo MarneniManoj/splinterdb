@@ -29,7 +29,7 @@ make clean
 
 make 
 
-## Test Commands:
+## Test and Evaluation Commands:
 
 make run-tests
 
