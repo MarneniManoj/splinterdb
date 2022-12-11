@@ -37,4 +37,7 @@ INCLUDE_SLOW_TESTS=true make run-tests
 
 perf stat -e cpu-clock, faults ./build/release/bin/driver_test splinter_test --perf --max-async-inflight 0 --num-insert-threads 4 --num-lookup-threads 4 --num-range-lookup-threads 0 --tree-size-gib 2 --cache-capacity-mib 512
 
+perf record ./build/release/bin/driver_test splinter_test --perf --max-async-inflight 0 --num-insert-threads 4 --num-lookup-threads 4 --num-range-lookup-threads 0 --tree-size-gib 2 --cache-capacity-mib 512
+
+perf report
 
