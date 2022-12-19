@@ -44,6 +44,7 @@ typedef struct shard_log {
    uint64                addr;
    uint64                meta_head;
    uint64                magic;
+   uint64                flushed_lsn;
 } shard_log;
 
 typedef struct log_entry log_entry;
@@ -93,5 +94,11 @@ shard_log_config_init(shard_log_config *log_cfg,
                       data_config      *data_cfg);
 void
 shard_log_print(shard_log *log);
+
+void
+
+shard_log_iterator_get_curr_WAL(iterator *itorh, slice *key, message *msg, uint64 *page_addr, uint64 *generation,
+                                uint64 *lsn, node_type *nt);
+
 
 #endif //__SHARD_LOG_H

@@ -11,13 +11,14 @@
 
 #include "splinterdb/default_data_config.h"
 #include "splinterdb/splinterdb.h"
+#include "recovery.h"
 
 #define DB_FILE_NAME    "splinterdb_intro_db"
 #define DB_FILE_SIZE_MB 1024 // Size of SplinterDB device; Fixed when created
 #define CACHE_SIZE_MB   64   // Size of cache; can be changed across boots
 
 /* Application declares the limit of key-sizes it intends to use */
-#define USER_MAX_KEY_SIZE ((int)100)
+#define USER_MAX_KEY_SIZE ((int)70)
 
 /*
  * -------------------------------------------------------------------------------
@@ -45,6 +46,7 @@ main()
    splinterdb *spl_handle = NULL; // To a running SplinterDB instance
 
    int rc = splinterdb_create(&splinterdb_cfg, &spl_handle);
+
    printf("Created SplinterDB instance, dbname '%s'.\n\n", DB_FILE_NAME);
 
    // Insert a few kv-pairs, describing properties of fruits.
@@ -54,21 +56,32 @@ main()
    slice       value = slice_create((size_t)strlen(descr), descr);
 
    rc = splinterdb_insert(spl_handle, key, value);
-   printf("Inserted key '%s'\n", fruit);
+//   printf("Inserted key '%s'\n", fruit);
 
    fruit = "Orange";
    descr = "Is a good source of vitamin-C.";
    key   = slice_create((size_t)strlen(fruit), fruit);
    value = slice_create((size_t)strlen(descr), descr);
    rc    = splinterdb_insert(spl_handle, key, value);
-   printf("Inserted key '%s'\n", fruit);
+//   printf("Inserted key '%s'\n", fruit);
+
+//   for (int i = 0; i <= 40000; ++i) {
+//      char buf[12];
+//      snprintf(buf, 12, "%d", i);
+//      fruit = buf;
+//      descr = "Is a good source of vitamin-C.";
+//      key   = slice_create((size_t)strlen(fruit), fruit);
+//      value = slice_create((size_t)strlen(descr), descr);
+//      rc    = splinterdb_insert(spl_handle, key, value);
+//      printf("Inserted key '%s' for the %d th time \n", fruit, i);
+//   }
 
    fruit = "Mango";
    descr = "Mango is the king of fruits.";
    key   = slice_create((size_t)strlen(fruit), fruit);
    value = slice_create((size_t)strlen(descr), descr);
    rc    = splinterdb_insert(spl_handle, key, value);
-   printf("Inserted key '%s'\n", fruit);
+//   printf("Inserted key '%s'\n", fruit);
 
    // Retrieve a key-value pair.
    splinterdb_lookup_result result;
@@ -94,6 +107,7 @@ main()
       printf("Key: '%s' not found. (rc=%d)\n", fruit, rc);
    }
    printf("\n");
+//   splinterdb_recover(spl_handle);
 
    printf("Shutdown and reopen SplinterDB instance ...\n");
    splinterdb_close(&spl_handle);

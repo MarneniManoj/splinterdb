@@ -3,6 +3,9 @@
 
 #include "btree_private.h"
 #include "poison.h"
+#include "shard_log.h"
+#include <stdlib.h>
+#include <string.h>
 
 /******************************************************************
  * Structure of a BTree node: Disk-resident structure:
@@ -843,6 +846,7 @@ btree_split_leaf_build_right_node(const btree_config    *cfg,      // IN
       if (spec->old_entry_state == ENTRY_STILL_EXISTS && i == spec->idx) {
          spec->old_entry_state = ENTRY_HAS_BEEN_REMOVED;
       } else {
+
          leaf_entry *entry = btree_get_leaf_entry(cfg, left_hdr, i);
          btree_set_leaf_entry(cfg,
                               right_hdr,
@@ -1242,6 +1246,38 @@ btree_unblock_dec_ref(cache *cc, btree_config *cfg, uint64 root_addr)
    mini_unblock_dec_ref(cc, meta_head);
 }
 
+static inline message create_grow_root_message(uint64 child_address){
+   char child_addr[20];
+   sprintf(child_addr, "%lu", child_address);
+   char *log_msg = &child_addr[0];
+   message grow_root_msg = message_create(MESSAGE_TYPE_GROW_ROOT, slice_create((size_t)strlen(log_msg), log_msg));
+   return grow_root_msg;
+}
+
+static inline message create_split_index_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type){
+   char child_addr[40];
+   sprintf(child_addr, "%lu %lu %lu", left_child_address, right_child_addr, left_child_index);
+   char *log_msg = &child_addr[0];
+   message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
+   return split_msg;
+}
+
+static inline message create_split_message(uint64 left_child_address, uint64 right_child_addr, uint64 left_child_index, message_type msg_type, message msg){
+//   printf("message size : %lu", msg.data.length);
+   char *msg_buf = (char *)msg.data.data;
+   char child_addr[2000];
+   sprintf(child_addr, "%lu %lu %lu %s", left_child_address, right_child_addr, left_child_index, msg_buf);
+   char *log_msg = &child_addr[0];
+   message split_msg = message_create(msg_type, slice_create((size_t)strlen(log_msg), log_msg));
+   return split_msg;
+}
+
+static inline uint64 write_to_wal(log_handle *log, slice key, message msg, uint64 *generation, node_type nt, uint64 page_addr){
+   uint64 lsn;
+   log_write(log,  key, msg, *generation, nt, page_addr, &lsn);
+   return lsn;
+}
+
 /**********************************************************************
  * The process of splitting a child leaf is divided into four steps in
  * order to minimize the amount of time that we hold write-locks on
@@ -1287,7 +1323,11 @@ btree_split_child_leaf(cache                 *cc,
                        uint64                 index_of_child_in_parent,
                        btree_node            *child,
                        leaf_incorporate_spec *spec,
-                       uint64                *generation) // OUT
+                       uint64                *generation, // OUT
+                       log_handle            *log,
+                       bool                  use_log,
+                       uint64 right_child_address,
+                       bool is_recovery)
 {
    btree_node right_child;
 
@@ -1297,14 +1337,19 @@ btree_split_child_leaf(cache                 *cc,
       btree_build_leaf_splitting_plan(cfg, child->hdr, spec);
 
    /* p: claim, c: claim, rc: - */
+   if (is_recovery){
+       right_child.addr = right_child_address;
+       btree_node_get(cc, cfg, &right_child, PAGE_TYPE_MEMTABLE);
+   } else {
+       btree_alloc(cc,
+                   mini,
+                   btree_height(child->hdr),
+                   NULL_SLICE,
+                   NULL,
+                   PAGE_TYPE_MEMTABLE,
+                   &right_child);
+   }
 
-   btree_alloc(cc,
-               mini,
-               btree_height(child->hdr),
-               NULL_SLICE,
-               NULL,
-               PAGE_TYPE_MEMTABLE,
-               &right_child);
 
    /* p: claim, c: claim, rc: write */
 
@@ -1321,15 +1366,27 @@ btree_split_child_leaf(cache                 *cc,
                                               BTREE_PIVOT_STATS_UNKNOWN);
       platform_assert(success);
    }
-   btree_node_full_unlock(cc, cfg, parent);
 
-   /* p: fully unlocked, c: claim, rc: write */
+   /* p: locked, c: claim, rc: write */
 
    btree_split_leaf_build_right_node(
       cfg, child->hdr, spec, plan, right_child.hdr, generation);
 
-   /* p: fully unlocked, c: claim, rc: write */
-
+   /* p: locked, c: claim, rc: write */
+   uint64 right_child_gen = right_child.hdr->generation;
+   if (use_log && !is_recovery) {
+       parent->hdr->page_lsn = write_to_wal(log, spec->key, create_split_message(child->addr,
+                                                          right_child.addr,
+                                                          index_of_child_in_parent,
+                                                          MESSAGE_TYPE_SPLIT_LEAF,
+                                                          spec->msg.new_message),
+                                                          &right_child_gen,
+                                                          NODE_TYPE_BTREE, parent->addr);
+       child->hdr->page_lsn = parent->hdr->page_lsn;
+       right_child.hdr->page_lsn = parent->hdr->page_lsn;
+   }
+   btree_node_full_unlock(cc, cfg, parent);
+   /* p: fully unlocked */
    btree_node_full_unlock(cc, cfg, &right_child);
 
    /* p: fully unlocked, c: claim, rc: fully unlocked */
@@ -1338,9 +1395,9 @@ btree_split_child_leaf(cache                 *cc,
    btree_split_leaf_cleanup_left_node(
       cfg, scratch, child->hdr, spec, plan, right_child.addr);
    if (plan.insertion_goes_left) {
-      bool incorporated = btree_try_perform_leaf_incorporate_spec(
-         cfg, child->hdr, spec, generation);
-      platform_assert(incorporated);
+       bool incorporated = btree_try_perform_leaf_incorporate_spec(
+               cfg, child->hdr, spec, generation);
+       platform_assert(incorporated);
    }
    btree_node_full_unlock(cc, cfg, child);
 
@@ -1365,8 +1422,11 @@ btree_defragment_or_split_child_leaf(cache              *cc,
                                      uint64      index_of_child_in_parent,
                                      btree_node *child,
                                      leaf_incorporate_spec *spec,
-                                     uint64                *generation) // OUT
+                                     uint64                *generation, // OUT
+                                     log_handle            *log,
+                                     bool                  use_log)
 {
+   //   printf("btree_defragment_or_split_child_leaf");
    uint64 nentries   = btree_num_entries(child->hdr);
    uint64 live_bytes = 0;
 
@@ -1387,9 +1447,13 @@ btree_defragment_or_split_child_leaf(cache              *cc,
       btree_node_unclaim(cc, cfg, parent);
       btree_node_unget(cc, cfg, parent);
       btree_node_lock(cc, cfg, child);
+
       btree_defragment_leaf(cfg, scratch, child->hdr, spec);
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child->hdr, spec, generation);
+      if (use_log && incorporated) {
+           child->hdr->page_lsn = write_to_wal(log, spec->key, spec->msg.new_message, generation, NODE_TYPE_BTREE, child->addr);
+      }
       platform_assert(incorporated);
       btree_node_full_unlock(cc, cfg, child);
    } else {
@@ -1401,7 +1465,11 @@ btree_defragment_or_split_child_leaf(cache              *cc,
                              index_of_child_in_parent,
                              child,
                              spec,
-                             generation);
+                             generation, 
+                             log,
+                             use_log,
+                             0,
+                             FALSE);
    }
 
    return 0;
@@ -1430,23 +1498,31 @@ btree_split_child_index(cache              *cc,
                         btree_node         *child,
                         const slice         key_to_be_inserted,
                         btree_node         *new_child, // OUT
-                        int64              *next_child_idx)         // IN/OUT
+                        int64              *next_child_idx,         // IN/OUT
+                        log_handle         *log,
+                        bool               use_log,
+                        uint64             right_child_address,
+                        bool               is_recovery)
 {
    btree_node right_child;
 
    /* p: lock, c: lock, rc: - */
 
    uint64 idx = btree_choose_index_split(cfg, child->hdr);
-
    /* p: lock, c: lock, rc: - */
+   if (is_recovery){
+      right_child.addr = right_child_address;
+      btree_node_get(cc, cfg, &right_child, PAGE_TYPE_MEMTABLE);
+   } else {
+      btree_alloc(cc,
+                  mini,
+                  btree_height(child->hdr),
+                  NULL_SLICE,
+                  NULL,
+                  PAGE_TYPE_MEMTABLE,
+                  &right_child);
+   }
 
-   btree_alloc(cc,
-               mini,
-               btree_height(child->hdr),
-               NULL_SLICE,
-               NULL,
-               PAGE_TYPE_MEMTABLE,
-               &right_child);
 
    /* p: lock, c: lock, rc: lock */
 
@@ -1461,6 +1537,20 @@ btree_split_child_index(cache              *cc,
                                right_child.addr,
                                BTREE_PIVOT_STATS_UNKNOWN);
    }
+
+   uint64 right_child_gen = child->hdr->generation;
+   if (use_log && !is_recovery)
+   {
+      parent->hdr->page_lsn = write_to_wal(log, key_to_be_inserted,
+                                           create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
+                                                                      MESSAGE_TYPE_SPLIT_INDEX),
+                                           &right_child_gen,
+                                           NODE_TYPE_BTREE,
+                                           parent->addr);
+      child->hdr->page_lsn = parent->hdr->page_lsn;
+      right_child.hdr->page_lsn = parent->hdr->page_lsn;
+   }
+
    btree_node_full_unlock(cc, cfg, parent);
 
    /* p: -, c: lock, rc: lock */
@@ -1493,7 +1583,18 @@ btree_split_child_index(cache              *cc,
    /* p:  -,
       c:  if nc == c  then locked else fully unlocked
       rc: if nc == rc then locked else fully unlocked */
-
+//   uint64 right_child_gen = right_child.hdr->generation;
+//   if (use_log && !is_recovery)
+//    {
+//        parent->hdr->page_lsn = write_to_wal(log, key_to_be_inserted,
+//                     create_split_index_message(child->addr, right_child.addr, index_of_child_in_parent,
+//                                                MESSAGE_TYPE_SPLIT_INDEX),
+//                     &right_child_gen,
+//                     NODE_TYPE_BTREE,
+//                     parent->addr);
+//        child->hdr->page_lsn = parent->hdr->page_lsn;
+//        right_child.hdr->page_lsn = parent->hdr->page_lsn;
+//    }
    return 0;
 }
 
@@ -1514,7 +1615,9 @@ btree_defragment_or_split_child_index(cache              *cc,
                                       btree_node *child,
                                       const slice key_to_be_inserted,
                                       btree_node *new_child, // OUT
-                                      int64      *next_child_idx) // IN/OUT
+                                      int64      *next_child_idx, // IN/OUT
+                                      log_handle *log,
+                                      bool   use_log)
 {
    uint64 nentries   = btree_num_entries(child->hdr);
    uint64 live_bytes = 0;
@@ -1538,7 +1641,9 @@ btree_defragment_or_split_child_index(cache              *cc,
                               child,
                               key_to_be_inserted,
                               new_child,
-                              next_child_idx);
+                              next_child_idx,
+                              log,
+                              use_log, 0, FALSE);
    }
 
    return 0;
@@ -1605,17 +1710,31 @@ static inline int
 btree_grow_root(cache              *cc,   // IN
                 const btree_config *cfg,  // IN
                 mini_allocator     *mini, // IN/OUT
-                btree_node         *root_node)    // OUT
+                btree_node         *root_node,    // OUT
+                log_handle         *log,
+                slice              key,   //TODO: remove
+                uint64 *generation, // TODO: remove
+                uint64 child_page_address,
+                bool is_recovery,
+                bool use_log)
 {
-   // allocate a new left node
    btree_node child;
-   btree_alloc(cc,
-               mini,
-               btree_height(root_node->hdr),
-               NULL_SLICE,
-               NULL,
-               PAGE_TYPE_MEMTABLE,
-               &child);
+   if(is_recovery) {
+       child.addr = child_page_address;
+       btree_node_get(cc, cfg, &child, PAGE_TYPE_MEMTABLE);
+       // Reset entries if partially written
+//       btree_reset_node_entries(cfg, child.hdr);
+   } else {
+       // allocate a new left node
+       btree_alloc(cc,
+                   mini,
+                   btree_height(root_node->hdr),
+                   NULL_SLICE,
+                   NULL,
+                   PAGE_TYPE_MEMTABLE,
+                   &child);
+
+   }
 
    // copy root to child
    memmove(child.hdr, root_node->hdr, btree_page_size(cfg));
@@ -1633,11 +1752,105 @@ btree_grow_root(cache              *cc,   // IN
    bool succeeded = btree_set_index_entry(
       cfg, root_node->hdr, 0, new_pivot, child.addr, BTREE_PIVOT_STATS_UNKNOWN);
    platform_assert(succeeded);
-
+   if (use_log && !is_recovery) {
+      root_node->hdr->page_lsn = write_to_wal(log, key, create_grow_root_message(child.addr), generation, NODE_TYPE_BTREE, root_node->addr);
+      child.hdr->page_lsn = root_node->hdr->page_lsn;
+   }
    btree_node_unget(cc, cfg, &child);
+
+
    return 0;
 }
 
+platform_status insert_key_to_btree_node(cache *cc,
+                                         const btree_config *cfg,
+                                         platform_heap_id heap_id,
+                                         slice key,
+                                         message msg,
+                                         uint64 page_addr){
+    platform_status rc;
+    leaf_incorporate_spec spec;
+    btree_node node;
+    node.addr = page_addr;
+start_over:
+    btree_node_get(cc, cfg,&node, PAGE_TYPE_MEMTABLE);
+    rc = btree_create_leaf_incorporate_spec(
+            cfg, heap_id, node.hdr, key, msg, &spec);
+    if (!SUCCESS(rc)) {
+        btree_node_unget(cc, cfg, &node);
+        return rc;
+    }
+    if (!btree_node_claim(cc, cfg, &node)) {
+        btree_node_unget(cc, cfg, &node);
+        destroy_leaf_incorporate_spec(&spec);
+        goto start_over;
+    }
+    // TODO : generation ?
+    uint64 generation;
+    if (btree_try_perform_leaf_incorporate_spec(
+            cfg, node.hdr, &spec, &generation));
+    {
+        btree_node_full_unlock(cc, cfg, &node);
+        destroy_leaf_incorporate_spec(&spec);
+        return STATUS_OK;
+    }
+
+}
+
+platform_status
+perform_brtee_WAL_entry_operation(cache              *cc,         // IN
+                                  const btree_config *cfg,        // IN
+                                  platform_heap_id    heap_id,    // IN
+                                  btree_scratch      *scratch,
+                                  mini_allocator     *mini,
+                                  slice key,
+                                  message msg,
+                                  message_type msg_type,
+                                  uint64 page_addr,
+                                  uint64 generation,
+                                  uint64 lsn){
+    // Check and redo operation
+//    btree_node node;
+//    node.addr = page_addr;
+
+    // Get the params from message
+//    uint64 msg_len = msg.data.length;
+//    char *msg_buf = (char *) msg.data.data;
+//    char *delim = " ";
+//    char *ptr = strtok(msg_buf, delim);
+//    char * child_addr_str;
+//    uint64 child_addr ;
+
+//    sprintf(child_addr_str, "%s", ptr);
+//    if(ptr != NULL)
+//    {
+//        printf("'%s'\n", ptr);
+
+//        ptr = strtok(NULL, delim);
+//    }
+
+
+//    btree_node_get(cc, cfg, &node, PAGE_TYPE_MEMTABLE);
+
+
+//    if (node.hdr->page_lsn < lsn){
+        // redo the operation
+//        switch (msg_type){
+//            case MESSAGE_TYPE_INSERT:
+//                break;
+//            case MESSAGE_TYPE_GROW_ROOT:
+//                break;
+//            case MESSAGE_TYPE_SPLIT_LEAF:
+//                break;
+//            case MESSAGE_TYPE_SPLIT_INDEX:
+//                break;
+//            default:
+//                break;
+//        }
+//
+//    }
+    return STATUS_OK;
+}
 /*
  *-----------------------------------------------------------------------------
  * btree_insert --
@@ -1656,7 +1869,9 @@ btree_insert(cache              *cc,         // IN
              slice               key,        // IN
              message             msg,        // IN
              uint64             *generation, // OUT
-             bool               *was_unique)               // OUT
+             bool               *was_unique, // OUT
+             log_handle         *log,        // IN
+             bool               use_log)
 {
    platform_status       rc;
    leaf_incorporate_spec spec;
@@ -1681,7 +1896,6 @@ btree_insert(cache              *cc,         // IN
 
 start_over:
    btree_node_get(cc, cfg, &root_node, PAGE_TYPE_MEMTABLE);
-
    if (btree_height(root_node.hdr) == 0) {
       rc = btree_create_leaf_incorporate_spec(
          cfg, heap_id, root_node.hdr, key, msg, &spec);
@@ -1698,13 +1912,16 @@ start_over:
       if (btree_try_perform_leaf_incorporate_spec(
              cfg, root_node.hdr, &spec, generation))
       {
+         if (use_log) {
+             root_node.hdr->page_lsn = write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, root_node.addr);
+         }
          *was_unique = spec.old_entry_state == ENTRY_DID_NOT_EXIST;
          btree_node_full_unlock(cc, cfg, &root_node);
          destroy_leaf_incorporate_spec(&spec);
          return STATUS_OK;
       }
       destroy_leaf_incorporate_spec(&spec);
-      btree_grow_root(cc, cfg, mini, &root_node);
+      btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE, use_log);
       btree_node_unlock(cc, cfg, &root_node);
       btree_node_unclaim(cc, cfg, &root_node);
    }
@@ -1734,7 +1951,7 @@ start_over:
                                    parent_entry->pivot_data.stats);
       }
       if (btree_index_is_full(cfg, root_node.hdr)) {
-         btree_grow_root(cc, cfg, mini, &root_node);
+         btree_grow_root(cc, cfg, mini, &root_node, log, key, generation, 0, FALSE, use_log);
          child_idx = 0;
       }
       if (need_to_set_min_key) {
@@ -1815,7 +2032,7 @@ start_over:
                                                   &child_node,
                                                   key,
                                                   &new_child,
-                                                  &next_child_idx);
+                                                  &next_child_idx, log, use_log);
             parent_node = new_child;
          } else {
             btree_node_full_unlock(cc, cfg, &parent_node);
@@ -1887,6 +2104,9 @@ start_over:
       btree_node_lock(cc, cfg, &child_node);
       bool incorporated = btree_try_perform_leaf_incorporate_spec(
          cfg, child_node.hdr, &spec, generation);
+      if (use_log) {
+          child_node.hdr->page_lsn = write_to_wal(log, key, spec.msg.new_message, generation, NODE_TYPE_BTREE, child_node.addr);
+      }
       platform_assert(incorporated);
       btree_node_full_unlock(cc, cfg, &child_node);
       destroy_leaf_incorporate_spec(&spec);
@@ -1930,7 +2150,9 @@ start_over:
                                         child_idx,
                                         &child_node,
                                         &spec,
-                                        generation);
+                                        generation,
+                                        log,
+                                        use_log);
    destroy_leaf_incorporate_spec(&spec);
    *was_unique = spec.old_entry_state == ENTRY_DID_NOT_EXIST;
    return STATUS_OK;
@@ -2766,7 +2988,7 @@ btree_pack_link_node(btree_pack_req *req,
    btree_node        *edge       = &req->edge[height][offset];
    btree_pivot_stats *edge_stats = &req->edge_stats[height][offset];
    slice              pivot = height ? btree_get_pivot(req->cfg, edge->hdr, 0)
-                                     : btree_get_tuple_key(req->cfg, edge->hdr, 0);
+                                       : btree_get_tuple_key(req->cfg, edge->hdr, 0);
    edge->hdr->next_extent_addr = next_extent_addr;
    btree_node_unlock(req->cc, req->cfg, edge);
    btree_node_unclaim(req->cc, req->cfg, edge);
@@ -3500,3 +3722,4 @@ btree_config_init(btree_config *btree_cfg,
                             + max_inline_msg_size + sizeof(table_entry);
    platform_assert(max_entry_space < (page_size - sizeof(btree_hdr)) / 2);
 }
+

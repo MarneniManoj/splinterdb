@@ -16,3 +16,28 @@ SplinterDB is *provided as-is* and is not recommended for use in production unti
 See [Build](docs/build.md) for instructions on building SplinterDB from source.
 
 See [Documentation](docs/README.md) for preliminary documentation.
+
+## Build Commands:
+
+export COMPILER=gcc 
+
+export CC=$COMPILER
+
+export LD=$COMPILER
+
+make clean 
+
+make 
+
+## Test and Evaluation Commands:
+
+make run-tests
+
+INCLUDE_SLOW_TESTS=true make run-tests
+
+perf stat -e cpu-clock, faults ./build/release/bin/driver_test splinter_test --perf --max-async-inflight 0 --num-insert-threads 4 --num-lookup-threads 4 --num-range-lookup-threads 0 --tree-size-gib 2 --cache-capacity-mib 512
+
+perf record ./build/release/bin/driver_test splinter_test --perf --max-async-inflight 0 --num-insert-threads 4 --num-lookup-threads 4 --num-range-lookup-threads 0 --tree-size-gib 2 --cache-capacity-mib 512
+
+perf report
+

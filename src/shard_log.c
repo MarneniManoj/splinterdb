@@ -22,9 +22,11 @@
 static uint64 shard_log_magic_idx = 0;
 
 int
-shard_log_write(log_handle *log, slice key, message msg, uint64 generation);
+shard_log_write(log_handle *log, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64* lsn);
 uint64
 shard_log_addr(log_handle *log);
+uint64
+shard_log_flush_lsn(log_handle *log);
 uint64
 shard_log_meta_addr(log_handle *log);
 uint64
@@ -33,10 +35,10 @@ shard_log_magic(log_handle *log);
 static log_ops shard_log_ops = {
    .write     = shard_log_write,
    .addr      = shard_log_addr,
+   .flush_lsn      = shard_log_flush_lsn,
    .meta_addr = shard_log_meta_addr,
    .magic     = shard_log_magic,
 };
-
 void
 shard_log_iterator_get_curr(iterator *itor, slice *key, message *msg);
 platform_status
@@ -145,6 +147,9 @@ struct ONDISK log_entry {
    uint16 keylen;
    uint16 messagelen;
    uint8  msg_type;
+   uint8  page_type;        //This log entry will make changes to this page type
+   uint64 lsn;              //Log sequence number of this entry
+   uint64 page_addr;        //Address of the page on which this entry will make a change
    char   contents[];
 };
 
@@ -221,8 +226,11 @@ get_new_page_for_thread(shard_log             *log,
    return 0;
 }
 
+//TODO replace with concurrent sequence number generator
+_Atomic uint64 global = 100;
+
 int
-shard_log_write(log_handle *logh, slice key, message msg, uint64 generation)
+shard_log_write(log_handle *logh, slice key, message msg, uint64 generation, node_type nt, uint64 page_addr, uint64 *lsn)
 {
    shard_log             *log = (shard_log *)logh;
    cache                 *cc  = log->cc;
@@ -257,6 +265,8 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation)
 
       cache_unlock(cc, page);
       cache_unclaim(cc, page);
+      log->flushed_lsn = global - 1;
+      //TODO : Check if it should be blocking
       cache_page_sync(cc, page, FALSE, PAGE_TYPE_LOG);
       cache_unget(cc, page);
 
@@ -271,12 +281,19 @@ shard_log_write(log_handle *logh, slice key, message msg, uint64 generation)
    cursor->keylen     = slice_length(key);
    cursor->messagelen = message_length(msg);
    cursor->msg_type   = message_class(msg);
+   cursor->page_type  = nt;
+   cursor->lsn        = global++;
+   *lsn               = cursor->lsn;
+   cursor->page_addr  = page_addr;
+
    memmove(log_entry_key_cursor(cursor), slice_data(key), slice_length(key));
    memmove(
       log_entry_message_cursor(cursor), message_data(msg), message_length(msg));
    hdr->num_entries++;
+   hdr->checksum = shard_log_checksum(log->cfg, page);
 
    thread_data->offset += new_entry_size;
+   hdr->checksum = shard_log_checksum(log->cfg, page);
    debug_assert(thread_data->offset <= shard_log_page_size(log->cfg));
 
    cache_unlock(cc, page);
@@ -291,6 +308,13 @@ shard_log_addr(log_handle *logh)
 {
    shard_log *log = (shard_log *)logh;
    return log->addr;
+}
+
+uint64
+shard_log_flush_lsn(log_handle *logh)
+{
+   shard_log *log = (shard_log *)logh;
+   return log->flushed_lsn;
 }
 
 uint64
@@ -349,6 +373,7 @@ shard_log_iterator_init(cache              *cc,
                         uint64              magic,
                         shard_log_iterator *itor)
 {
+   printf("shard_log_iterator_init %lu", addr);
    page_handle *page;
    uint64       i;
    uint64       pages_per_extent = shard_log_pages_per_extent(cfg);
@@ -393,6 +418,7 @@ shard_log_iterator_init(cache              *cc,
       for (i = 0; i < pages_per_extent; i++) {
          page_addr = extent_addr + i * shard_log_page_size(cfg);
          page      = cache_get(cc, page_addr, TRUE, PAGE_TYPE_LOG);
+
          if (shard_log_valid(cfg, page, magic)) {
             for (log_entry *le = first_log_entry(page->data);
                  !terminal_log_entry(cfg, page->data, le);
@@ -437,6 +463,20 @@ shard_log_iterator_get_curr(iterator *itorh, slice *key, message *msg)
    *msg                     = log_entry_message(itor->entries[itor->pos]);
 }
 
+void
+shard_log_iterator_get_curr_WAL(iterator *itorh, slice *key, message *msg, uint64 *page_addr, uint64 *generation,
+                                uint64 *lsn, node_type *nt)
+
+{
+    shard_log_iterator *itor = (shard_log_iterator *)itorh;
+    *key                     = log_entry_key(itor->entries[itor->pos]);
+    *msg                     = log_entry_message(itor->entries[itor->pos]);
+    *page_addr               = itor->entries[itor->pos]->page_addr;
+    *generation              = itor->entries[itor->pos]->generation;
+    *lsn                     = itor->entries[itor->pos]->lsn;
+    *nt                      = itor->entries[itor->pos]->page_type;
+}
+
 platform_status
 shard_log_iterator_at_end(iterator *itorh, bool *at_end)
 {
@@ -479,7 +519,7 @@ shard_log_print(shard_log *log)
    uint64            extent_addr      = log->addr;
    shard_log_config *cfg              = log->cfg;
    uint64            magic            = log->magic;
-   data_config      *dcfg             = cfg->data_cfg;
+   // data_config      *dcfg             = cfg->data_cfg;
    uint64            pages_per_extent = shard_log_pages_per_extent(cfg);
 
    while (extent_addr != 0 && cache_get_ref(cc, extent_addr) > 0) {
@@ -494,10 +534,14 @@ shard_log_print(shard_log *log)
                  !terminal_log_entry(cfg, page->data, le);
                  le = log_entry_next(le))
             {
-               platform_default_log("%s -- %s : %lu\n",
-                                    key_string(dcfg, log_entry_key(le)),
-                                    message_string(dcfg, log_entry_message(le)),
-                                    le->generation);
+               // platform_default_log("%s -- %s : %lu\n",
+               //                      key_string(dcfg, log_entry_key(le)),
+               //                      message_string(dcfg, log_entry_message(le)),
+               //                      le->generation);
+              platform_default_log("\nread log entry : operation: %d key: %s value: %s page_addr: %lu generation: %lu lsn: %lu\n", log_entry_message(le).type, (char *)log_entry_key(le).data,
+                     (char *)log_entry_message(le).data.data, le->page_addr,
+                     le->generation, le->lsn);
+
             }
          }
          cache_unget(cc, page);

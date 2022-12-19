@@ -96,6 +96,7 @@ CTEST2(splinterdb_stress, test_random_inserts_concurrent)
    for (int i = 0; i < num_threads; i++) {
       void *thread_rc;
       int   rc = pthread_join(thread_ids[i], &thread_rc);
+      fprintf(stdout, "Joined thread %d\n", i);
       ASSERT_EQUAL(0, rc);
       if (thread_rc != 0) {
          fprintf(stderr,
@@ -182,8 +183,8 @@ exec_worker_thread(void *w)
          fprintf(stderr, "Thread %lu has completed %u inserts\n", thread_id, i);
       }
    }
-
    splinterdb_deregister_thread(kvsb);
+   fprintf(stdout, "Deregister threads complete\n");
    return 0;
 }
 

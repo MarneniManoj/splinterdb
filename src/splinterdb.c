@@ -13,6 +13,7 @@
  *-----------------------------------------------------------------------------
  */
 
+#include <unistd.h>
 #include "platform.h"
 
 #include "clockcache.h"
@@ -22,7 +23,7 @@
 #include "btree_private.h"
 #include "shard_log.h"
 #include "poison.h"
-
+#include "splinterdb/default_data_config.h"
 const char *BUILD_VERSION = "splinterdb_build_version " GIT_VERSION;
 const char *
 splinterdb_get_version()
@@ -391,7 +392,7 @@ splinterdb_init_config(const splinterdb_config *kvs_cfg, // IN
                      cfg.filter_remainder_size,
                      cfg.filter_index_size,
                      cfg.reclaim_threshold,
-                     cfg.use_log,
+                     TRUE,
                      cfg.use_stats,
                      FALSE,
                      NULL);
@@ -427,6 +428,16 @@ splinterdb_create_or_open(const splinterdb_config *kvs_cfg,      // IN
                          kvs_cfg->filename,
                          platform_status_to_string(status));
       goto deinit_kvhandle;
+   }
+   if(!open_existing){
+      FILE *fptr;
+      fptr = fopen("need_to_recover","w");
+      if(fptr == NULL)
+      {
+         platform_error_log("Failed to create reovery file");
+         goto deinit_kvhandle;
+      }
+      fclose(fptr);
    }
 
    status = io_handle_init(
@@ -513,6 +524,10 @@ splinterdb_create_or_open(const splinterdb_config *kvs_cfg,      // IN
       goto deinit_cache;
    }
 
+   if (open_existing && kvs->spl->cfg.use_log) {
+      splinterdb_recover(kvs);
+   }
+
    *kvs_out = kvs;
    return platform_status_to_int(status);
 
@@ -528,6 +543,20 @@ deinit_kvhandle:
    platform_free(kvs_cfg->heap_id, kvs);
 
    return platform_status_to_int(status);
+}
+
+int
+splinterdb_start(const splinterdb_config *cfg, // IN
+                  splinterdb             **kvs  // OUT
+)
+{
+   if (access("need_to_recover", F_OK) == 0) {
+      platform_default_log("Recovering the database..");
+      return splinterdb_create_or_open(cfg, kvs, TRUE);
+   } else {
+      platform_default_log("Creating the database..");
+      return splinterdb_create_or_open(cfg, kvs, FALSE);
+   }
 }
 
 int
@@ -564,6 +593,7 @@ splinterdb_close(splinterdb **kvs_in) // IN
 {
    splinterdb *kvs = *kvs_in;
    platform_assert(kvs != NULL);
+   shard_log_print((shard_log *) kvs->spl->log);
 
    trunk_unmount(&kvs->spl);
    clockcache_deinit(&kvs->cache_handle);
@@ -573,6 +603,10 @@ splinterdb_close(splinterdb **kvs_in) // IN
 
    platform_free(kvs->heap_id, kvs);
    *kvs_in = (splinterdb *)NULL;
+   if (remove("need_to_recover") == 0)
+      platform_default_log("recovery file deleted successfully");
+   else
+      platform_default_log("Unable to delete the recovery file");
 }
 
 
@@ -731,6 +765,10 @@ splinterdb_update(const splinterdb *kvsb, slice key, slice update)
    return splinterdb_insert_message(kvsb, key, msg);
 }
 
+void
+splinterdb_recover(const splinterdb *kvs){
+   read_WAL_for_recovery(kvs->spl);
+}
 /*
  *-----------------------------------------------------------------------------
  * _splinterdb_lookup_result structure --
@@ -959,3 +997,4 @@ splinterdb_stats_reset(splinterdb *kvs)
 {
    trunk_reset_stats(kvs->spl);
 }
+
